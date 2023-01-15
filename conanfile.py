@@ -60,7 +60,7 @@ class IOMgrConan(ConanFile):
         self.requires("zmarok-semver/1.1.0")
 
         self.requires("flatbuffers/1.12.0", override=True)
-        self.requires("openssl/1.1.1q", override=True)
+        self.requires("openssl/1.1.1s", override=True)
         self.requires("zlib/1.2.12", override=True)
 
     def build(self):
