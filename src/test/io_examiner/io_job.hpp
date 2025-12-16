@@ -38,7 +38,7 @@ public:
     IOJobCfg& operator=(IOJobCfg&&) noexcept = delete;
 
     std::optional< uint64_t > max_num_ios;
-    uint64_t max_io_size{1 * Mi};
+    uint64_t max_io_size{4 * Ki};
     uint64_t qdepth{32u};
     uint64_t max_disk_capacity{10 * Gi};
 
@@ -398,7 +398,7 @@ private:
         req->buffer = iomanager.iobuf_alloc(512, size);
         populate_buf(req->buffer, size, lba);
 
-        LOGTRACE("Write op size={} lba={} outstanding_ios={}", size, lba,
+        LOGINFO("Write op size={} lba={} outstanding_ios={}", size, lba,
                  m_outstanding_ios.load(std::memory_order_relaxed) + 1);
         COUNTER_INCREMENT(m_metrics, iojob_write_count, 1);
         req->start_time = Clock::now();

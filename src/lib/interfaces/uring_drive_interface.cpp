@@ -30,7 +30,7 @@
 #include <sys/epoll.h>
 #include <linux/version.h>
 #endif
-
+//#include <sisl/fds/obj_allocator.hpp>
 #include <sisl/fds/utils.hpp>
 #include <sisl/logging/logging.h>
 #include "epoll/reactor_epoll.hpp"
@@ -208,6 +208,8 @@ folly::Future< std::error_code > UringDriveInterface::async_write(IODevice* iode
     } else {
         // io_uring_prep_write available starts from kernel 5.6
         auto iocb = new drive_iocb(this, iodev, DriveOpType::WRITE, size, offset);
+        //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::WRITE, size, offset);
+
         iocb->set_data((char*)data);
         iocb->completion = std::move(folly::Promise< std::error_code >{});
         auto ret = iocb->folly_comp_promise().getFuture().thenValue([iocb](std::error_code ec) {
@@ -216,7 +218,7 @@ folly::Future< std::error_code > UringDriveInterface::async_write(IODevice* iode
         });
 
         auto submit_in_this_thread = [this](drive_iocb* iocb, bool part_of_batch) {
-            DriveInterface::increment_outstanding_counter(iocb);
+           // DriveInterface::increment_outstanding_counter(iocb);
             auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
             if (sqe == nullptr) { return; }
 
@@ -238,6 +240,7 @@ folly::Future< std::error_code > UringDriveInterface::async_write(IODevice* iode
 folly::Future< std::error_code > UringDriveInterface::async_writev(IODevice* iodev, const iovec* iov, int iovcnt,
                                                                    uint32_t size, uint64_t offset, bool part_of_batch) {
     auto iocb = new drive_iocb(this, iodev, DriveOpType::WRITE, size, offset);
+    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::WRITE, size, offset);
     iocb->set_iovs(iov, iovcnt);
     iocb->completion = std::move(folly::Promise< std::error_code >{});
     auto ret = iocb->folly_comp_promise().getFuture().thenValue([iocb](std::error_code ec) {
@@ -246,7 +249,7 @@ folly::Future< std::error_code > UringDriveInterface::async_writev(IODevice* iod
     });
 
     auto submit_in_this_thread = [this](drive_iocb* iocb, bool part_of_batch) {
-        DriveInterface::increment_outstanding_counter(iocb);
+        //DriveInterface::increment_outstanding_counter(iocb);
         auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
         if (sqe == nullptr) { return; }
 
@@ -272,6 +275,8 @@ folly::Future< std::error_code > UringDriveInterface::async_read(IODevice* iodev
         return async_readv(iodev, iov.data(), 1, size, offset, part_of_batch);
     } else {
         auto iocb = new drive_iocb(this, iodev, DriveOpType::READ, size, offset);
+        //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::READ, size, offset);
+
         iocb->set_data(data);
         iocb->completion = std::move(folly::Promise< std::error_code >{});
         auto ret = iocb->folly_comp_promise().getFuture().thenValue([iocb](std::error_code ec) {
@@ -280,7 +285,7 @@ folly::Future< std::error_code > UringDriveInterface::async_read(IODevice* iodev
         });
 
         auto submit_in_this_thread = [this](drive_iocb* iocb, bool part_of_batch) {
-            DriveInterface::increment_outstanding_counter(iocb);
+            //DriveInterface::increment_outstanding_counter(iocb);
             auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
             if (sqe == nullptr) { return; }
 
@@ -301,6 +306,8 @@ folly::Future< std::error_code > UringDriveInterface::async_read(IODevice* iodev
 folly::Future< std::error_code > UringDriveInterface::async_readv(IODevice* iodev, const iovec* iov, int iovcnt,
                                                                   uint32_t size, uint64_t offset, bool part_of_batch) {
     auto iocb = new drive_iocb(this, iodev, DriveOpType::READ, size, offset);
+    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::READ, size, offset);
+
     iocb->set_iovs(iov, iovcnt);
     iocb->completion = std::move(folly::Promise< std::error_code >{});
     auto ret = iocb->folly_comp_promise().getFuture().thenValue([iocb](std::error_code ec) {
@@ -309,7 +316,7 @@ folly::Future< std::error_code > UringDriveInterface::async_readv(IODevice* iode
     });
 
     auto submit_in_this_thread = [this](drive_iocb* iocb, bool part_of_batch) {
-        DriveInterface::increment_outstanding_counter(iocb);
+       // DriveInterface::increment_outstanding_counter(iocb);
         auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
         if (sqe == nullptr) { return; }
 
@@ -340,11 +347,13 @@ folly::Future< std::error_code > UringDriveInterface::async_write_zero(IODevice*
 
 folly::Future< std::error_code > UringDriveInterface::queue_fsync(IODevice* iodev) {
     auto iocb = new drive_iocb(this, iodev, DriveOpType::FSYNC, 0, 0);
+    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::FSYNC, 0, 0);
+
     iocb->completion = std::move(folly::Promise< std::error_code >{});
     auto ret = iocb->folly_comp_promise().getFuture();
 
     auto submit_in_this_thread = [this](drive_iocb* iocb) {
-        DriveInterface::increment_outstanding_counter(iocb);
+        //DriveInterface::increment_outstanding_counter(iocb);
         auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
         if (sqe == nullptr) { return; }
 
@@ -373,11 +382,13 @@ std::error_code UringDriveInterface::sync_write(IODevice* iodev, const char* dat
         return sync_writev(iodev, iov.data(), 1, size, offset);
     } else {
         auto iocb = new drive_iocb(this, iodev, DriveOpType::WRITE, size, offset);
+        // auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::WRITE, size, offset);
+
         iocb->set_data((char*)data);
         iocb->completion = std::move(FiberManagerLib::Promise< std::error_code >{});
         auto f = iocb->fiber_comp_promise().getFuture();
 
-        DriveInterface::increment_outstanding_counter(iocb);
+        //DriveInterface::increment_outstanding_counter(iocb);
         auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
         assert(sqe);
 
@@ -394,11 +405,13 @@ std::error_code UringDriveInterface::sync_writev(IODevice* iodev, const iovec* i
     }
 
     auto iocb = new drive_iocb(this, iodev, DriveOpType::WRITE, size, offset);
+    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::WRITE, size, offset);
+
     iocb->set_iovs(iov, iovcnt);
     iocb->completion = std::move(FiberManagerLib::Promise< std::error_code >{});
     auto f = iocb->fiber_comp_promise().getFuture();
 
-    DriveInterface::increment_outstanding_counter(iocb);
+    //DriveInterface::increment_outstanding_counter(iocb);
     auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
     assert(sqe);
 
@@ -420,11 +433,13 @@ std::error_code UringDriveInterface::sync_read(IODevice* iodev, char* data, uint
         return sync_readv(iodev, iov.data(), 1, size, offset);
     } else {
         auto iocb = new drive_iocb(this, iodev, DriveOpType::READ, size, offset);
+       // auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::READ, size, offset);
+
         iocb->set_data(data);
         iocb->completion = std::move(FiberManagerLib::Promise< std::error_code >{});
         auto f = iocb->fiber_comp_promise().getFuture();
 
-        DriveInterface::increment_outstanding_counter(iocb);
+        //DriveInterface::increment_outstanding_counter(iocb);
         auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
         assert(sqe);
 
@@ -440,11 +455,13 @@ std::error_code UringDriveInterface::sync_readv(IODevice* iodev, const iovec* io
         return KernelDriveInterface::sync_readv(iodev, iov, iovcnt, size, offset);
     }
     auto iocb = new drive_iocb(this, iodev, DriveOpType::READ, size, offset);
+    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::READ, size, offset);
+
     iocb->set_iovs(iov, iovcnt);
     iocb->completion = std::move(FiberManagerLib::Promise< std::error_code >{});
     auto f = iocb->fiber_comp_promise().getFuture();
 
-    DriveInterface::increment_outstanding_counter(iocb);
+    //DriveInterface::increment_outstanding_counter(iocb);
     auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
     assert(sqe);
 
@@ -468,15 +485,15 @@ void UringDriveInterface::handle_completions() {
         struct io_uring_cqe* cqe;
         int ret = io_uring_peek_cqe(&t_uring_ch->m_ring, &cqe);
         if (sisl_unlikely(*(t_uring_ch->m_ring.cq.koverflow))) {
-            COUNTER_INCREMENT(m_metrics, overflow_errors, 1);
-            COUNTER_INCREMENT(m_metrics, num_of_drops, *(t_uring_ch->m_ring.cq.koverflow));
+           // COUNTER_INCREMENT(m_metrics, overflow_errors, 1);
+           // COUNTER_INCREMENT(m_metrics, num_of_drops, *(t_uring_ch->m_ring.cq.koverflow));
             folly::throwSystemError(fmt::format("CQ overflow - number of dropped io requests : {} - {}",
                                                 *(t_uring_ch->m_ring.cq.koverflow), strerror(errno)));
             break;
         }
         if (sisl_unlikely(ret < 0)) {
             if (ret != -EAGAIN) {
-                COUNTER_INCREMENT(m_metrics, completion_errors, 1);
+                //COUNTER_INCREMENT(m_metrics, completion_errors, 1);
                 folly::throwSystemError(fmt::format("io_uring_wait_cqe throw error={}", strerror(errno)));
             } else {
                 LOGTRACEMOD(iomgr, "Received EAGAIN on uring peek cqe");
@@ -505,7 +522,7 @@ void UringDriveInterface::handle_completions() {
                     // in production, keep retrying until we get all the data;
                 }
 
-                COUNTER_INCREMENT(m_metrics, retry_on_partial_read, 1);
+                //COUNTER_INCREMENT(m_metrics, retry_on_partial_read, 1);
                 iocb->update_iovs_on_partial_result();
                 // retry I/O with remaining unset data;
                 t_uring_ch->m_iocb_waitq.push(iocb);
@@ -550,7 +567,8 @@ void UringDriveInterface::complete_io(drive_iocb* iocb) {
                               [&](io_interface_comp_cb_t& cb) { cb(iocb->result); }},
                    iocb->completion);
     }
-    DriveInterface::decrement_outstanding_counter(iocb);
+    //DriveInterface::decrement_outstanding_counter(iocb);
     delete iocb;
+	//sisl::ObjectAllocator< drive_iocb >::deallocate(iocb);
 }
 } // namespace iomgr
