@@ -34,7 +34,7 @@
 #include <sisl/fds/utils.hpp>
 #include <sisl/logging/logging.h>
 #include "epoll/reactor_epoll.hpp"
-
+SISL_LOGGING_DEF(perf)
 namespace iomgr {
 thread_local uring_drive_channel* UringDriveInterface::t_uring_ch{nullptr};
 
@@ -203,12 +203,12 @@ folly::Future< std::error_code > UringDriveInterface::async_write(IODevice* iode
         std::array< iovec, 1 > iov;
         iov[0].iov_base = (void*)data;
         iov[0].iov_len = size;
-
+		 LOGINFOMOD(perf, "Submitting OLD async_write  as async_writev for device {} size {} offset {} 512/4k aligned={}/{}", iodev->devname, size, offset, offset % 512 == 0, size % 4096 == 0);
         return async_writev(iodev, iov.data(), 1, size, offset, part_of_batch);
     } else {
         // io_uring_prep_write available starts from kernel 5.6
         auto iocb = new drive_iocb(this, iodev, DriveOpType::WRITE, size, offset);
-        //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::WRITE, size, offset);
+        //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(this, iodev, DriveOpType::WRITE, size, offset);
 
         iocb->set_data((char*)data);
         iocb->completion = std::move(folly::Promise< std::error_code >{});
@@ -229,7 +229,15 @@ folly::Future< std::error_code > UringDriveInterface::async_write(IODevice* iode
         if (iomanager.this_reactor() != nullptr) {
             submit_in_this_thread(iocb, part_of_batch);
         } else {
-            iomanager.run_on_forget(reactor_regex::random_worker,
+ 			 char name[64] = {0};
+  			 pthread_getname_np(pthread_self(), name, sizeof(name));
+   			 if (std::strlen(name) > 0) {
+			 	LOGWARNMOD(perf, "Submitting NEW async_write  in random worker from {}", name);
+			}else{
+				auto id_hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
+		 		LOGWARNMOD(perf, "Submitting NEW async_write  in random worker from {}",std::to_string(id_hash) );
+			}
+			 iomanager.run_on_forget(reactor_regex::random_worker,
                                     [=]() { submit_in_this_thread(iocb, part_of_batch); });
         }
 
@@ -240,7 +248,7 @@ folly::Future< std::error_code > UringDriveInterface::async_write(IODevice* iode
 folly::Future< std::error_code > UringDriveInterface::async_writev(IODevice* iodev, const iovec* iov, int iovcnt,
                                                                    uint32_t size, uint64_t offset, bool part_of_batch) {
     auto iocb = new drive_iocb(this, iodev, DriveOpType::WRITE, size, offset);
-    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::WRITE, size, offset);
+    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(this, iodev, DriveOpType::WRITE, size, offset);
     iocb->set_iovs(iov, iovcnt);
     iocb->completion = std::move(folly::Promise< std::error_code >{});
     auto ret = iocb->folly_comp_promise().getFuture().thenValue([iocb](std::error_code ec) {
@@ -260,6 +268,14 @@ folly::Future< std::error_code > UringDriveInterface::async_writev(IODevice* iod
     if (iomanager.this_reactor() != nullptr) {
         submit_in_this_thread(iocb, part_of_batch);
     } else {
+  			 char name[64] = {0};
+  			 pthread_getname_np(pthread_self(), name, sizeof(name));
+   			 if (std::strlen(name) > 0) {
+			 	LOGWARNMOD(perf, "Submitting NEW async_writev  in random worker from {}", name);
+			}else{
+				auto id_hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
+		 		LOGWARNMOD(perf, "Submitting NEW async_writev  in random worker from {}",std::to_string(id_hash) );
+			}
         iomanager.run_on_forget(reactor_regex::random_worker, [=]() { submit_in_this_thread(iocb, part_of_batch); });
     }
     return ret;
@@ -271,11 +287,12 @@ folly::Future< std::error_code > UringDriveInterface::async_read(IODevice* iodev
         std::array< iovec, 1 > iov;
         iov[0].iov_base = data;
         iov[0].iov_len = size;
+		LOGTRACEMOD(perf, "Submitting OLD async_read  as async_writev for device {} size {} offset {} 512/4k aligned={}/{}", iodev->devname, size, offset, offset % 512 == 0, size % 4096 == 0);
 
         return async_readv(iodev, iov.data(), 1, size, offset, part_of_batch);
     } else {
         auto iocb = new drive_iocb(this, iodev, DriveOpType::READ, size, offset);
-        //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::READ, size, offset);
+        //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(this, iodev, DriveOpType::READ, size, offset);
 
         iocb->set_data(data);
         iocb->completion = std::move(folly::Promise< std::error_code >{});
@@ -288,6 +305,7 @@ folly::Future< std::error_code > UringDriveInterface::async_read(IODevice* iodev
             //DriveInterface::increment_outstanding_counter(iocb);
             auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
             if (sqe == nullptr) { return; }
+		  LOGTRACEMOD(perf, "Submitted async_read for device {} size {} offset {} 512/4k aligned={}/{} part of batch {}", iocb->iodev->devname, iocb->size, iocb->offset, (iocb->offset) % 512 == 0, (iocb->size) % 4096 == 0, part_of_batch);
 
             io_uring_prep_read(sqe, iocb->iodev->fd(), (void*)iocb->get_data(), iocb->size, iocb->offset);
             t_uring_ch->submit_if_needed(iocb, sqe, part_of_batch);
@@ -296,6 +314,15 @@ folly::Future< std::error_code > UringDriveInterface::async_read(IODevice* iodev
         if (iomanager.this_reactor() != nullptr) {
             submit_in_this_thread(iocb, part_of_batch);
         } else {
+  			 char name[64] = {0};
+  			 pthread_getname_np(pthread_self(), name, sizeof(name));
+   			 if (std::strlen(name) > 0) {
+			 	LOGWARNMOD(perf, "Submitting NEW async_read  in random worker from {}", name);
+			}else{
+				auto id_hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
+		 		LOGWARNMOD(perf, "Submitting NEW async_read  in random worker from {}",std::to_string(id_hash) );
+			}
+
             iomanager.run_on_forget(reactor_regex::random_worker,
                                     [=]() { submit_in_this_thread(iocb, part_of_batch); });
         }
@@ -306,7 +333,7 @@ folly::Future< std::error_code > UringDriveInterface::async_read(IODevice* iodev
 folly::Future< std::error_code > UringDriveInterface::async_readv(IODevice* iodev, const iovec* iov, int iovcnt,
                                                                   uint32_t size, uint64_t offset, bool part_of_batch) {
     auto iocb = new drive_iocb(this, iodev, DriveOpType::READ, size, offset);
-    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::READ, size, offset);
+    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(this, iodev, DriveOpType::READ, size, offset);
 
     iocb->set_iovs(iov, iovcnt);
     iocb->completion = std::move(folly::Promise< std::error_code >{});
@@ -322,11 +349,20 @@ folly::Future< std::error_code > UringDriveInterface::async_readv(IODevice* iode
 
         io_uring_prep_readv(sqe, iocb->iodev->fd(), iocb->get_iovs(), iocb->iovcnt, iocb->offset);
         t_uring_ch->submit_if_needed(iocb, sqe, part_of_batch);
+		LOGTRACEMOD(perf, "Submitted async_readv for device {} size {} offset {} 512/4k aligned={}/{} part of batch {}", iocb->iodev->devname, iocb->size, iocb->offset, (iocb->offset) % 512 == 0, (iocb->size) % 4096 == 0, part_of_batch);
     };
 
     if (iomanager.this_reactor() != nullptr) {
         submit_in_this_thread(iocb, part_of_batch);
     } else {
+ 			 char name[64] = {0};
+  			 pthread_getname_np(pthread_self(), name, sizeof(name));
+   			 if (std::strlen(name) > 0) {
+			 	LOGWARNMOD(perf, "Submitting NEW async_readv  in random worker from {}", name);
+			}else{
+				auto id_hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
+		 		LOGWARNMOD(perf, "Submitting NEW async_readv  in random worker from {}",std::to_string(id_hash) );
+			}
         iomanager.run_on_forget(reactor_regex::random_worker, [=]() { submit_in_this_thread(iocb, part_of_batch); });
     }
     return ret;
@@ -347,7 +383,7 @@ folly::Future< std::error_code > UringDriveInterface::async_write_zero(IODevice*
 
 folly::Future< std::error_code > UringDriveInterface::queue_fsync(IODevice* iodev) {
     auto iocb = new drive_iocb(this, iodev, DriveOpType::FSYNC, 0, 0);
-    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::FSYNC, 0, 0);
+    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(this, iodev, DriveOpType::FSYNC, 0, 0);
 
     iocb->completion = std::move(folly::Promise< std::error_code >{});
     auto ret = iocb->folly_comp_promise().getFuture();
@@ -364,25 +400,45 @@ folly::Future< std::error_code > UringDriveInterface::queue_fsync(IODevice* iode
     if (iomanager.this_reactor() != nullptr) {
         submit_in_this_thread(iocb);
     } else {
+		LOGWARNMOD(perf, "Submitting NEW queue_fsync  in random worker");
+  		 char name[64] = {0};
+  		 pthread_getname_np(pthread_self(), name, sizeof(name));
+   		 if (std::strlen(name) > 0) {
+		 LOGWARNMOD(perf, "Submitting NEW queue_fsync  in random worker from {}", name);
+		}else{
+		auto id_hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
+
+		 LOGWARNMOD(perf, "Submitting NEW queue_fsync  in random worker from {}",std::to_string(id_hash) );
+		}
+
         iomanager.run_on_forget(reactor_regex::random_worker, [=]() { submit_in_this_thread(iocb); });
     }
     return ret;
 }
 
 std::error_code UringDriveInterface::sync_write(IODevice* iodev, const char* data, uint32_t size, uint64_t offset) {
+
     if (!iomanager.am_i_sync_io_capable() || (t_uring_ch == nullptr) || !t_uring_ch->can_submit()) {
-        return KernelDriveInterface::sync_write(iodev, data, size, offset);
+        //return KernelDriveInterface::sync_write(iodev, data, size, offset);
+		auto sync_io_capable = iomanager.am_i_sync_io_capable() ? "true" : "false";
+        auto uring_ch_null = t_uring_ch == nullptr ? "true" : "false";
+        auto can_submit = (t_uring_ch && t_uring_ch->can_submit()) ? "true" : "false";
+        auto start_time = Clock::now();
+        auto ret = KernelDriveInterface::sync_write(iodev, data, size, offset);
+        LOGTRACEMOD(perf, "sync_write called size {} latency {} sync_io_capable {} uring_ch {} can_submit {}", size,
+                get_elapsed_time_us(start_time), sync_io_capable, uring_ch_null, can_submit);
+        return ret;
     }
 
     if (!m_new_intfc) {
         std::array< iovec, 1 > iov;
         iov[0].iov_base = (void*)data;
         iov[0].iov_len = size;
-
+		LOGWARNMOD(perf, "Submitting OLD sync_write  as sync_writev for device {} size {} offset {} 512/4k aligned={}/{}", iodev->devname, size, offset, offset % 512 == 0, size % 4096 == 0);
         return sync_writev(iodev, iov.data(), 1, size, offset);
     } else {
         auto iocb = new drive_iocb(this, iodev, DriveOpType::WRITE, size, offset);
-        // auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::WRITE, size, offset);
+         //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(this, iodev, DriveOpType::WRITE, size, offset);
 
         iocb->set_data((char*)data);
         iocb->completion = std::move(FiberManagerLib::Promise< std::error_code >{});
@@ -401,11 +457,15 @@ std::error_code UringDriveInterface::sync_write(IODevice* iodev, const char* dat
 std::error_code UringDriveInterface::sync_writev(IODevice* iodev, const iovec* iov, int iovcnt, uint32_t size,
                                                  uint64_t offset) {
     if (!iomanager.am_i_sync_io_capable() || (t_uring_ch == nullptr) || !t_uring_ch->can_submit()) {
-        return KernelDriveInterface::sync_writev(iodev, iov, iovcnt, size, offset);
+		auto start_time = Clock::now();
+        auto ret = KernelDriveInterface::sync_writev(iodev, iov, iovcnt, size, offset);
+        LOGTRACEMOD(perf, "sync_writev called size {} latency {}", size, get_elapsed_time_us(start_time));
+		return ret;
+//return KernelDriveInterface::sync_writev(iodev, iov, iovcnt, size, offset);
     }
 
     auto iocb = new drive_iocb(this, iodev, DriveOpType::WRITE, size, offset);
-    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::WRITE, size, offset);
+    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(this, iodev, DriveOpType::WRITE, size, offset);
 
     iocb->set_iovs(iov, iovcnt);
     iocb->completion = std::move(FiberManagerLib::Promise< std::error_code >{});
@@ -422,18 +482,26 @@ std::error_code UringDriveInterface::sync_writev(IODevice* iodev, const iovec* i
 
 std::error_code UringDriveInterface::sync_read(IODevice* iodev, char* data, uint32_t size, uint64_t offset) {
     if (!iomanager.am_i_sync_io_capable() || (t_uring_ch == nullptr) || !t_uring_ch->can_submit()) {
-        return KernelDriveInterface::sync_read(iodev, data, size, offset);
+        auto sync_io_capable = iomanager.am_i_sync_io_capable() ? "true" : "false";
+        auto uring_ch_null = t_uring_ch == nullptr ? "true" : "false";
+        auto can_submit = (t_uring_ch && t_uring_ch->can_submit()) ? "true" : "false";
+        auto start_time = Clock::now();
+        auto ret = KernelDriveInterface::sync_read(iodev, data, size, offset);
+        LOGTRACEMOD(perf, "sync_read called size {} latency {} sync_io_capable {} uring_ch {} can_submit {}", size,
+                get_elapsed_time_us(start_time), sync_io_capable, uring_ch_null, can_submit);
+    	return ret;
+	//return KernelDriveInterface::sync_read(iodev, data, size, offset);
     }
 
     if (!m_new_intfc) {
         std::array< iovec, 1 > iov;
         iov[0].iov_base = data;
         iov[0].iov_len = size;
-
+		LOGWARNMOD(perf, "Submitting OLD sync_read  as sync_readv for device {} size {} offset {} 512/4k aligned={}/{}", iodev->devname, size, offset, offset % 512 == 0, size % 4096 == 0);
         return sync_readv(iodev, iov.data(), 1, size, offset);
     } else {
         auto iocb = new drive_iocb(this, iodev, DriveOpType::READ, size, offset);
-       // auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::READ, size, offset);
+       //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(this, iodev, DriveOpType::READ, size, offset);
 
         iocb->set_data(data);
         iocb->completion = std::move(FiberManagerLib::Promise< std::error_code >{});
@@ -452,10 +520,14 @@ std::error_code UringDriveInterface::sync_read(IODevice* iodev, char* data, uint
 std::error_code UringDriveInterface::sync_readv(IODevice* iodev, const iovec* iov, int iovcnt, uint32_t size,
                                                 uint64_t offset) {
     if (!iomanager.am_i_sync_io_capable() || (t_uring_ch == nullptr) || !t_uring_ch->can_submit()) {
-        return KernelDriveInterface::sync_readv(iodev, iov, iovcnt, size, offset);
+        //return KernelDriveInterface::sync_readv(iodev, iov, iovcnt, size, offset);
+		auto start_time = Clock::now();
+        auto ret = KernelDriveInterface::sync_readv(iodev, iov, iovcnt, size, offset);
+        LOGTRACEMOD(perf, "sync_readv called size {} latency {}", size, get_elapsed_time_us(start_time));
+		return ret;
     }
     auto iocb = new drive_iocb(this, iodev, DriveOpType::READ, size, offset);
-    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::READ, size, offset);
+    //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(this, iodev, DriveOpType::READ, size, offset);
 
     iocb->set_iovs(iov, iovcnt);
     iocb->completion = std::move(FiberManagerLib::Promise< std::error_code >{});

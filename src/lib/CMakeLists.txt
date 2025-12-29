@@ -43,6 +43,7 @@ set(IOMGR_OBJECTS
     iomgr_timer.cpp
     watchdog.cpp
     http_server.cpp
+    io_device.cpp
 )
 if (${spdk_FOUND})
     list (APPEND IOMGR_OBJECTS $<TARGET_OBJECTS:iomgr_spdk> )

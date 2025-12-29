@@ -398,7 +398,7 @@ private:
         req->buffer = iomanager.iobuf_alloc(512, size);
         populate_buf(req->buffer, size, lba);
 
-        LOGINFO("Write op size={} lba={} outstanding_ios={}", size, lba,
+        LOGTRACE("Write op size={} lba={} outstanding_ios={}", size, lba,
                  m_outstanding_ios.load(std::memory_order_relaxed) + 1);
         COUNTER_INCREMENT(m_metrics, iojob_write_count, 1);
         req->start_time = Clock::now();

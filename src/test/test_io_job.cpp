@@ -24,6 +24,8 @@ SISL_OPTION_GROUP(test_io,
                    "seconds"),
                   (num_threads, "", "num_threads", "num_threads - default 2 for spdk and 8 for non-spdk",
                    ::cxxopts::value< uint32_t >()->default_value("8"), "number"),
+                   (num_fibers, "", "num_fibers", "number of fibers per thread",
+                  ::cxxopts::value< uint32_t >()->default_value("2"), "number"),
                   (blk_size, "", "blk_size", "blk size in KB for IO",
                    ::cxxopts::value< uint32_t >()->default_value("0"), "number"),
                   (qdepth, "", "qdepth", "qdepth for IO",
@@ -41,8 +43,9 @@ SISL_OPTIONS_ENABLE(ENABLED_OPTIONS)
 
 TEST(IOMgrTest, basic_io_test) {
     const auto nthreads = SISL_OPTIONS["num_threads"].as< uint32_t >();
+    const auto nfibers = SISL_OPTIONS["num_fibers"].as< uint32_t >();
     const auto is_spdk = SISL_OPTIONS["spdk"].as< bool >();
-    auto examiner = std::make_shared< iomgr::IOExaminer >(nthreads, false /* integrated mode */, is_spdk);
+    auto examiner = std::make_shared< iomgr::IOExaminer >(nthreads, nfibers, false /* integrated mode */, is_spdk);
 
     // Create an add the device
     std::vector< std::string > devs{fmt::format("/tmp/io_test_{}", is_spdk ? "spdk" : "epoll")};
@@ -52,18 +55,18 @@ TEST(IOMgrTest, basic_io_test) {
         const std::filesystem::path file_path{dev};
         if (!std::filesystem::exists(file_path)) {
             LOGINFO("Device {} doesn't exists, creating a file for size {}", dev, dev_size);
-            const auto fd{::open(dev.c_str(), O_RDWR | O_CREAT, 0666)};
+            const auto fd{::open(dev.c_str(), O_RDWR | O_CREAT | O_DIRECT, 0666)};
             assert(fd > 0);
             std::filesystem::resize_file(file_path, dev_size);
             ::close(fd);
         }
-        examiner->add_device(dev, O_RDWR);
+        examiner->add_device(dev, O_RDWR | O_DIRECT);
     }
 
     IOJobCfg cfg;
     cfg.max_disk_capacity = dev_size;
     cfg.run_time = SISL_OPTIONS["run_time"].as< uint32_t >();
-    cfg.io_dist = {{io_type_t::write, 100}, {io_type_t::read, 0}};
+    cfg.io_dist = {{io_type_t::write, 50}, {io_type_t::read, 50}};
     cfg.load_type = (load_type_t)SISL_OPTIONS["load_type"].as< uint32_t >();
     cfg.io_blk_size = SISL_OPTIONS["blk_size"].as< uint32_t >()*1024;
     cfg.qdepth = SISL_OPTIONS["qdepth"].as< uint32_t >();

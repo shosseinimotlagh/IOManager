@@ -72,6 +72,7 @@ SISL_OPTION_GROUP(iomgr,
 // SISL v11 change
 SISL_LOGGING_DEF(iomgr)
 
+
 namespace iomgr {
 
 IOManager::IOManager() : m_fiber_ordinal_reserver(IOManager::max_io_fibers) {
