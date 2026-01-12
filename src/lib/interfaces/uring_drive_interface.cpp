@@ -34,8 +34,17 @@
 #include <sisl/fds/utils.hpp>
 #include <sisl/logging/logging.h>
 #include "epoll/reactor_epoll.hpp"
-SISL_LOGGING_DEF(perf)
+SISL_LOGGING_DEF(perfasync)
+SISL_LOGGING_DEF(perfsync)
+SISL_LOGGING_DEF(perfuring)
 namespace iomgr {
+static std::string current_thread_name_or_id() {
+ 	char name[64] = {0};
+ 	int rc = pthread_getname_np(pthread_self(), name, sizeof(name));
+ 	if (rc == 0 && name[0] != '\0') { return std::string{name}; }
+	auto id_hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
+	return std::to_string(id_hash);
+}
 thread_local uring_drive_channel* UringDriveInterface::t_uring_ch{nullptr};
 
 uring_drive_channel::uring_drive_channel(UringDriveInterface* iface) {
@@ -83,6 +92,7 @@ struct io_uring_sqe* uring_drive_channel::get_sqe_or_enqueue(drive_iocb* iocb) {
 
 void uring_drive_channel::submit_ios() {
     if (m_prepared_ios != 0) {
+		LOGTRACEMOD(perfuring, "Submitting {} prepared ios; already {} inflight ios", m_prepared_ios, m_in_flight_ios);
         const auto ret = io_uring_submit(&m_ring);
         if (static_cast< int >(m_prepared_ios) < ret) {
             DEBUG_ASSERT(false, "prepared ios must be always equal or greater than just-submitted ios");
@@ -199,11 +209,13 @@ void UringDriveInterface::close_dev(const io_device_ptr& iodev) {
 
 folly::Future< std::error_code > UringDriveInterface::async_write(IODevice* iodev, const char* data, uint32_t size,
                                                                   uint64_t offset, bool part_of_batch) {
+	auto tn = current_thread_name_or_id();
     if (!m_new_intfc) {
         std::array< iovec, 1 > iov;
         iov[0].iov_base = (void*)data;
         iov[0].iov_len = size;
-		 LOGINFOMOD(perf, "Submitting OLD async_write  as async_writev for device {} size {} offset {} 512/4k aligned={}/{}", iodev->devname, size, offset, offset % 512 == 0, size % 4096 == 0);
+
+		 LOGINFOMOD(perfasync, "{}: Submitting OLD async_write  as async_writev for device {} size {} offset {} 512/4k aligned={}/{}", tn, iodev->devname, size, offset, offset % 512 == 0, size % 4096 == 0);
         return async_writev(iodev, iov.data(), 1, size, offset, part_of_batch);
     } else {
         // io_uring_prep_write available starts from kernel 5.6
@@ -221,7 +233,7 @@ folly::Future< std::error_code > UringDriveInterface::async_write(IODevice* iode
            // DriveInterface::increment_outstanding_counter(iocb);
             auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
             if (sqe == nullptr) { return; }
-
+		    LOGTRACEMOD(perfasync, "Submitted async_write for device {} size {} offset {} 512/4k aligned={}/{} part of batch {}", iocb->iodev->devname, iocb->size, iocb->offset, (iocb->offset) % 512 == 0, (iocb->size) % 4096 == 0, part_of_batch);
             io_uring_prep_write(sqe, iocb->iodev->fd(), (const void*)iocb->get_data(), iocb->size, iocb->offset);
             t_uring_ch->submit_if_needed(iocb, sqe, part_of_batch);
         };
@@ -229,15 +241,9 @@ folly::Future< std::error_code > UringDriveInterface::async_write(IODevice* iode
         if (iomanager.this_reactor() != nullptr) {
             submit_in_this_thread(iocb, part_of_batch);
         } else {
- 			 char name[64] = {0};
-  			 pthread_getname_np(pthread_self(), name, sizeof(name));
-   			 if (std::strlen(name) > 0) {
-			 	LOGWARNMOD(perf, "Submitting NEW async_write  in random worker from {}", name);
-			}else{
-				auto id_hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
-		 		LOGWARNMOD(perf, "Submitting NEW async_write  in random worker from {}",std::to_string(id_hash) );
-			}
-			 iomanager.run_on_forget(reactor_regex::random_worker,
+			LOGINFOMOD(perfasync, "thread: {}: Submitting NEW async_write  in random worker", tn);
+			LOGINFOMOD(perfasync,"thread swicth for async_write");
+			iomanager.run_on_forget(reactor_regex::random_worker,
                                     [=]() { submit_in_this_thread(iocb, part_of_batch); });
         }
 
@@ -247,7 +253,9 @@ folly::Future< std::error_code > UringDriveInterface::async_write(IODevice* iode
 
 folly::Future< std::error_code > UringDriveInterface::async_writev(IODevice* iodev, const iovec* iov, int iovcnt,
                                                                    uint32_t size, uint64_t offset, bool part_of_batch) {
-    auto iocb = new drive_iocb(this, iodev, DriveOpType::WRITE, size, offset);
+    auto tn = current_thread_name_or_id();
+	auto iocb = new drive_iocb(this, iodev, DriveOpType::WRITE, size, offset);
+
     //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(this, iodev, DriveOpType::WRITE, size, offset);
     iocb->set_iovs(iov, iovcnt);
     iocb->completion = std::move(folly::Promise< std::error_code >{});
@@ -260,6 +268,7 @@ folly::Future< std::error_code > UringDriveInterface::async_writev(IODevice* iod
         //DriveInterface::increment_outstanding_counter(iocb);
         auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
         if (sqe == nullptr) { return; }
+		LOGTRACEMOD(perfasync, "Submitted async_writev for device {} size {} offset {} 512/4k aligned={}/{} part of batch {}", iocb->iodev->devname, iocb->size, iocb->offset, (iocb->offset) % 512 == 0, (iocb->size) % 4096 == 0, part_of_batch);
 
         io_uring_prep_writev(sqe, iocb->iodev->fd(), iocb->get_iovs(), iocb->iovcnt, iocb->offset);
         t_uring_ch->submit_if_needed(iocb, sqe, part_of_batch);
@@ -268,14 +277,8 @@ folly::Future< std::error_code > UringDriveInterface::async_writev(IODevice* iod
     if (iomanager.this_reactor() != nullptr) {
         submit_in_this_thread(iocb, part_of_batch);
     } else {
-  			 char name[64] = {0};
-  			 pthread_getname_np(pthread_self(), name, sizeof(name));
-   			 if (std::strlen(name) > 0) {
-			 	LOGWARNMOD(perf, "Submitting NEW async_writev  in random worker from {}", name);
-			}else{
-				auto id_hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
-		 		LOGWARNMOD(perf, "Submitting NEW async_writev  in random worker from {}",std::to_string(id_hash) );
-			}
+  		LOGINFOMOD(perfasync, "thread: {}: Submitting NEW async_writev  in random worker", tn);
+		LOGINFOMOD(perfasync,"thread swicth for async_writev");
         iomanager.run_on_forget(reactor_regex::random_worker, [=]() { submit_in_this_thread(iocb, part_of_batch); });
     }
     return ret;
@@ -283,11 +286,12 @@ folly::Future< std::error_code > UringDriveInterface::async_writev(IODevice* iod
 
 folly::Future< std::error_code > UringDriveInterface::async_read(IODevice* iodev, char* data, uint32_t size,
                                                                  uint64_t offset, bool part_of_batch) {
+    auto tn = current_thread_name_or_id();
     if (!m_new_intfc) {
         std::array< iovec, 1 > iov;
         iov[0].iov_base = data;
         iov[0].iov_len = size;
-		LOGTRACEMOD(perf, "Submitting OLD async_read  as async_writev for device {} size {} offset {} 512/4k aligned={}/{}", iodev->devname, size, offset, offset % 512 == 0, size % 4096 == 0);
+		LOGTRACEMOD(perfasync, "Submitting OLD async_read  as async_writev for device {} size {} offset {} 512/4k aligned={}/{}", iodev->devname, size, offset, offset % 512 == 0, size % 4096 == 0);
 
         return async_readv(iodev, iov.data(), 1, size, offset, part_of_batch);
     } else {
@@ -305,7 +309,7 @@ folly::Future< std::error_code > UringDriveInterface::async_read(IODevice* iodev
             //DriveInterface::increment_outstanding_counter(iocb);
             auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
             if (sqe == nullptr) { return; }
-		  LOGTRACEMOD(perf, "Submitted async_read for device {} size {} offset {} 512/4k aligned={}/{} part of batch {}", iocb->iodev->devname, iocb->size, iocb->offset, (iocb->offset) % 512 == 0, (iocb->size) % 4096 == 0, part_of_batch);
+		   LOGTRACEMOD(perfasync, "Submitted async_read for device {} size {} offset {} 512/4k aligned={}/{} part of batch {}", iocb->iodev->devname, iocb->size, iocb->offset, (iocb->offset) % 512 == 0, (iocb->size) % 4096 == 0, part_of_batch);
 
             io_uring_prep_read(sqe, iocb->iodev->fd(), (void*)iocb->get_data(), iocb->size, iocb->offset);
             t_uring_ch->submit_if_needed(iocb, sqe, part_of_batch);
@@ -314,15 +318,8 @@ folly::Future< std::error_code > UringDriveInterface::async_read(IODevice* iodev
         if (iomanager.this_reactor() != nullptr) {
             submit_in_this_thread(iocb, part_of_batch);
         } else {
-  			 char name[64] = {0};
-  			 pthread_getname_np(pthread_self(), name, sizeof(name));
-   			 if (std::strlen(name) > 0) {
-			 	LOGWARNMOD(perf, "Submitting NEW async_read  in random worker from {}", name);
-			}else{
-				auto id_hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
-		 		LOGWARNMOD(perf, "Submitting NEW async_read  in random worker from {}",std::to_string(id_hash) );
-			}
-
+  			LOGINFOMOD(perfasync, "thread: {}: Submitting NEW async_read  in random worker", tn);
+			LOGINFOMOD(perfasync,"thread swicth for async_read");
             iomanager.run_on_forget(reactor_regex::random_worker,
                                     [=]() { submit_in_this_thread(iocb, part_of_batch); });
         }
@@ -332,6 +329,8 @@ folly::Future< std::error_code > UringDriveInterface::async_read(IODevice* iodev
 
 folly::Future< std::error_code > UringDriveInterface::async_readv(IODevice* iodev, const iovec* iov, int iovcnt,
                                                                   uint32_t size, uint64_t offset, bool part_of_batch) {
+    auto tn = current_thread_name_or_id();
+
     auto iocb = new drive_iocb(this, iodev, DriveOpType::READ, size, offset);
     //auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(this, iodev, DriveOpType::READ, size, offset);
 
@@ -349,20 +348,15 @@ folly::Future< std::error_code > UringDriveInterface::async_readv(IODevice* iode
 
         io_uring_prep_readv(sqe, iocb->iodev->fd(), iocb->get_iovs(), iocb->iovcnt, iocb->offset);
         t_uring_ch->submit_if_needed(iocb, sqe, part_of_batch);
-		LOGTRACEMOD(perf, "Submitted async_readv for device {} size {} offset {} 512/4k aligned={}/{} part of batch {}", iocb->iodev->devname, iocb->size, iocb->offset, (iocb->offset) % 512 == 0, (iocb->size) % 4096 == 0, part_of_batch);
+		LOGTRACEMOD(perfasync, "Submitted async_readv for device {} size {} offset {} 512/4k aligned={}/{} part of batch {}", iocb->iodev->devname, iocb->size, iocb->offset, (iocb->offset) % 512 == 0, (iocb->size) % 4096 == 0, part_of_batch);
     };
 
     if (iomanager.this_reactor() != nullptr) {
         submit_in_this_thread(iocb, part_of_batch);
     } else {
- 			 char name[64] = {0};
-  			 pthread_getname_np(pthread_self(), name, sizeof(name));
-   			 if (std::strlen(name) > 0) {
-			 	LOGWARNMOD(perf, "Submitting NEW async_readv  in random worker from {}", name);
-			}else{
-				auto id_hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
-		 		LOGWARNMOD(perf, "Submitting NEW async_readv  in random worker from {}",std::to_string(id_hash) );
-			}
+
+		LOGINFOMOD(perfasync, "thread {}, Submitting NEW async_readv  in random worker",tn );
+		LOGINFOMOD (perfasync,"thread swicth for async_readv");
         iomanager.run_on_forget(reactor_regex::random_worker, [=]() { submit_in_this_thread(iocb, part_of_batch); });
     }
     return ret;
@@ -400,32 +394,22 @@ folly::Future< std::error_code > UringDriveInterface::queue_fsync(IODevice* iode
     if (iomanager.this_reactor() != nullptr) {
         submit_in_this_thread(iocb);
     } else {
-		LOGWARNMOD(perf, "Submitting NEW queue_fsync  in random worker");
-  		 char name[64] = {0};
-  		 pthread_getname_np(pthread_self(), name, sizeof(name));
-   		 if (std::strlen(name) > 0) {
-		 LOGWARNMOD(perf, "Submitting NEW queue_fsync  in random worker from {}", name);
-		}else{
-		auto id_hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
-
-		 LOGWARNMOD(perf, "Submitting NEW queue_fsync  in random worker from {}",std::to_string(id_hash) );
-		}
-
         iomanager.run_on_forget(reactor_regex::random_worker, [=]() { submit_in_this_thread(iocb); });
     }
     return ret;
 }
 
 std::error_code UringDriveInterface::sync_write(IODevice* iodev, const char* data, uint32_t size, uint64_t offset) {
-
+	auto tn = current_thread_name_or_id();
+	auto start_time = Clock::now();
     if (!iomanager.am_i_sync_io_capable() || (t_uring_ch == nullptr) || !t_uring_ch->can_submit()) {
         //return KernelDriveInterface::sync_write(iodev, data, size, offset);
 		auto sync_io_capable = iomanager.am_i_sync_io_capable() ? "true" : "false";
         auto uring_ch_null = t_uring_ch == nullptr ? "true" : "false";
         auto can_submit = (t_uring_ch && t_uring_ch->can_submit()) ? "true" : "false";
-        auto start_time = Clock::now();
+
         auto ret = KernelDriveInterface::sync_write(iodev, data, size, offset);
-        LOGTRACEMOD(perf, "sync_write called size {} latency {} sync_io_capable {} uring_ch {} can_submit {}", size,
+        LOGTRACEMOD(perfsync, "thread: {} sync_write called size {} latency {} sync_io_capable {} uring_ch {} can_submit {}", tn, size,
                 get_elapsed_time_us(start_time), sync_io_capable, uring_ch_null, can_submit);
         return ret;
     }
@@ -434,7 +418,7 @@ std::error_code UringDriveInterface::sync_write(IODevice* iodev, const char* dat
         std::array< iovec, 1 > iov;
         iov[0].iov_base = (void*)data;
         iov[0].iov_len = size;
-		LOGWARNMOD(perf, "Submitting OLD sync_write  as sync_writev for device {} size {} offset {} 512/4k aligned={}/{}", iodev->devname, size, offset, offset % 512 == 0, size % 4096 == 0);
+		LOGWARNMOD(perfsync, "thread: {} Submitting OLD sync_write  as sync_writev for device {} size {} offset {} 512/4k aligned={}/{}", tn, iodev->devname, size, offset, offset % 512 == 0, size % 4096 == 0);
         return sync_writev(iodev, iov.data(), 1, size, offset);
     } else {
         auto iocb = new drive_iocb(this, iodev, DriveOpType::WRITE, size, offset);
@@ -450,16 +434,20 @@ std::error_code UringDriveInterface::sync_write(IODevice* iodev, const char* dat
 
         io_uring_prep_write(sqe, iodev->fd(), (const void*)iocb->get_data(), iocb->size, offset);
         t_uring_ch->submit_if_needed(iocb, sqe, false);
-        return f.get();
+		auto ret = f.get();
+        LOGTRACEMOD(perfsync, "thread: {} sync_write called size {} latency {}", tn, size, get_elapsed_time_us(start_time));
+        return ret;
     }
 }
 
 std::error_code UringDriveInterface::sync_writev(IODevice* iodev, const iovec* iov, int iovcnt, uint32_t size,
                                                  uint64_t offset) {
+    auto tn = current_thread_name_or_id();
+	auto start_time = Clock::now();
     if (!iomanager.am_i_sync_io_capable() || (t_uring_ch == nullptr) || !t_uring_ch->can_submit()) {
-		auto start_time = Clock::now();
+
         auto ret = KernelDriveInterface::sync_writev(iodev, iov, iovcnt, size, offset);
-        LOGTRACEMOD(perf, "sync_writev called size {} latency {}", size, get_elapsed_time_us(start_time));
+        LOGTRACEMOD(perfsync, "thread: {} sync_writev called size {} latency {}", tn, size, get_elapsed_time_us(start_time));
 		return ret;
 //return KernelDriveInterface::sync_writev(iodev, iov, iovcnt, size, offset);
     }
@@ -477,17 +465,20 @@ std::error_code UringDriveInterface::sync_writev(IODevice* iodev, const iovec* i
 
     io_uring_prep_writev(sqe, iodev->fd(), iocb->get_iovs(), iocb->iovcnt, offset);
     t_uring_ch->submit_if_needed(iocb, sqe, false);
-    return f.get();
+	auto ret = f.get();
+    LOGTRACEMOD(perfsync, "thread: {} sync_writev called size {} latency {}",tn, size, get_elapsed_time_us(start_time));
+    return ret;
 }
 
 std::error_code UringDriveInterface::sync_read(IODevice* iodev, char* data, uint32_t size, uint64_t offset) {
+        auto start_time = Clock::now();
+    auto tn = current_thread_name_or_id();
     if (!iomanager.am_i_sync_io_capable() || (t_uring_ch == nullptr) || !t_uring_ch->can_submit()) {
         auto sync_io_capable = iomanager.am_i_sync_io_capable() ? "true" : "false";
         auto uring_ch_null = t_uring_ch == nullptr ? "true" : "false";
         auto can_submit = (t_uring_ch && t_uring_ch->can_submit()) ? "true" : "false";
-        auto start_time = Clock::now();
         auto ret = KernelDriveInterface::sync_read(iodev, data, size, offset);
-        LOGTRACEMOD(perf, "sync_read called size {} latency {} sync_io_capable {} uring_ch {} can_submit {}", size,
+        LOGTRACEMOD(perfsync, "thread: {} sync_read called size {} latency {} sync_io_capable {} uring_ch {} can_submit {}", tn, size,
                 get_elapsed_time_us(start_time), sync_io_capable, uring_ch_null, can_submit);
     	return ret;
 	//return KernelDriveInterface::sync_read(iodev, data, size, offset);
@@ -497,7 +488,7 @@ std::error_code UringDriveInterface::sync_read(IODevice* iodev, char* data, uint
         std::array< iovec, 1 > iov;
         iov[0].iov_base = data;
         iov[0].iov_len = size;
-		LOGWARNMOD(perf, "Submitting OLD sync_read  as sync_readv for device {} size {} offset {} 512/4k aligned={}/{}", iodev->devname, size, offset, offset % 512 == 0, size % 4096 == 0);
+		LOGWARNMOD(perfsync, "thread {} Submitting OLD sync_read  as sync_readv for device {} size {} offset {} 512/4k aligned={}/{}",tn,  iodev->devname, size, offset, offset % 512 == 0, size % 4096 == 0);
         return sync_readv(iodev, iov.data(), 1, size, offset);
     } else {
         auto iocb = new drive_iocb(this, iodev, DriveOpType::READ, size, offset);
@@ -513,17 +504,20 @@ std::error_code UringDriveInterface::sync_read(IODevice* iodev, char* data, uint
 
         io_uring_prep_read(sqe, iodev->fd(), (void*)iocb->get_data(), iocb->size, offset);
         t_uring_ch->submit_if_needed(iocb, sqe, false);
-        return f.get();
+        auto ret = f.get();
+    	LOGTRACEMOD(perfsync, "thread: {} sync_read called size {} latency {}", tn, size, get_elapsed_time_us(start_time));
+    	return ret;
     }
 }
 
 std::error_code UringDriveInterface::sync_readv(IODevice* iodev, const iovec* iov, int iovcnt, uint32_t size,
                                                 uint64_t offset) {
+	auto tn = current_thread_name_or_id();
+    auto start_time = Clock::now();
     if (!iomanager.am_i_sync_io_capable() || (t_uring_ch == nullptr) || !t_uring_ch->can_submit()) {
         //return KernelDriveInterface::sync_readv(iodev, iov, iovcnt, size, offset);
-		auto start_time = Clock::now();
         auto ret = KernelDriveInterface::sync_readv(iodev, iov, iovcnt, size, offset);
-        LOGTRACEMOD(perf, "sync_readv called size {} latency {}", size, get_elapsed_time_us(start_time));
+        LOGTRACEMOD(perfsync, "sync_readv called size {} latency {}", size, get_elapsed_time_us(start_time));
 		return ret;
     }
     auto iocb = new drive_iocb(this, iodev, DriveOpType::READ, size, offset);
@@ -539,7 +533,9 @@ std::error_code UringDriveInterface::sync_readv(IODevice* iodev, const iovec* io
 
     io_uring_prep_readv(sqe, iodev->fd(), iocb->get_iovs(), iocb->iovcnt, offset);
     t_uring_ch->submit_if_needed(iocb, sqe, false);
-    return f.get();
+        auto ret = f.get();
+    	LOGTRACEMOD(perfsync, "thread: {} sync_read called size {} latency {}", tn, size, get_elapsed_time_us(start_time));
+    	return ret;
 }
 
 void UringDriveInterface::submit_batch() { t_uring_ch->submit_ios(); }
@@ -583,6 +579,7 @@ void UringDriveInterface::handle_completions() {
             if (sisl_likely(static_cast< uint64_t >(iocb->result) == iocb->size)) {
                 // all read buffer is filled by uring;
                 LOGDEBUGMOD(iomgr, "Received completion event, iocb={} Result={}", iocb->to_string(), iocb->result);
+				LOGTRACEMOD(perfuring, "Received completion event, iocb={} Result={}", iocb->to_string(), iocb->result);
                 complete_io(iocb);
             } else {
                 // ***** Paritial Read Handling ******** //
@@ -610,6 +607,8 @@ void UringDriveInterface::handle_completions() {
             } else {
                 // if disk driver return EAGAIN, keep retrying unconditionally;
                 // Retry IO by pushing it to waitq which will get scheduled later.
+			     LOGWARNMOD(perfuring, "driver return EAGAIN, keep retrying unconditionally");
+
                 t_uring_ch->m_iocb_waitq.push(iocb);
             }
         }
@@ -619,10 +618,6 @@ void UringDriveInterface::handle_completions() {
 }
 
 void UringDriveInterface::complete_io(drive_iocb* iocb) {
-#ifdef _PRERELEASE
-    if (DriveInterface::inject_delay_if_needed(iocb, [this](drive_iocb* iocb) { complete_io(iocb); })) { return; }
-#endif
-
     if (sisl_likely(iocb->result >= 0)) {
         static std::error_code success;
         std::visit(overloaded{[&](folly::Promise< std::error_code >& p) { p.setValue(success); },
