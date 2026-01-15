@@ -575,7 +575,7 @@ IOThreadMetrics& IOManager::this_thread_metrics() {
 }
 
 io_fiber_t IOManager::iofiber_self() const { return this_reactor()->iofiber_self(); };
-
+bool IOManager::am_i_main_fiber() const { return this_reactor()->iofiber_self() == this_reactor()->main_fiber(); };
 bool IOManager::am_i_io_reactor() const {
     auto* r = this_reactor();
     return r && r->is_io_reactor();
@@ -609,6 +609,11 @@ void IOManager::set_my_reactor_adaptive(bool adaptive) {
 std::vector< io_fiber_t > IOManager::sync_io_capable_fibers() const {
     auto* r = this_reactor();
     return r ? r->sync_io_capable_fibers() : std::vector< io_fiber_t >{};
+}
+
+io_fiber_t IOManager::main_fiber() const {
+    auto* r = this_reactor();
+    return r ? r->main_fiber() : nullptr;
 }
 
 /////////////////// IOManager Memory Management APIs ///////////////////////////////////

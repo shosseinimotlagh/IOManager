@@ -87,6 +87,11 @@ struct uring_drive_channel {
     bool can_submit() const;
     void submit_if_needed(drive_iocb* iocb, struct io_uring_sqe*, bool part_of_batch);
     void drain_waitq();
+	std::string to_string(){
+		return fmt::format("in: {} prep: {} wq: {} total: {}",
+			m_in_flight_ios, m_prepared_ios , m_iocb_waitq.size(),
+m_prepared_ios +  m_in_flight_ios);
+	}
 };
 
 class UringDriveInterface : public KernelDriveInterface {
@@ -131,5 +136,6 @@ private:
     static thread_local uring_drive_channel* t_uring_ch;
     UringDriveInterfaceMetrics m_metrics; //
     bool m_new_intfc;
+     std::pair<int,bool> fiber_id();
 };
 } // namespace iomgr

@@ -37,7 +37,11 @@ public:
             iomanager.schedule_global_timer(cfg.interrupt_ops_sec * 1000ul * 1000ul * 1000ul, true, nullptr,
                                             iomgr::reactor_regex::all_worker,
                                             [this](void* cookie) { try_run_one_iteration(); });
+
         }
+		iomanager.schedule_global_timer(1 * 1000ul * 1000ul * 1000ul, true, nullptr,
+                                            iomgr::reactor_regex::random_worker,
+                                            [this](void* cookie) { report_completions(); });
     }
     virtual ~Job() = default;
     Job(const Job&) = delete;
@@ -50,9 +54,10 @@ public:
     virtual bool is_job_done() const = 0;
     virtual bool is_async_job() const = 0;
     virtual std::string job_name() const = 0;
+	virtual void report_completions ()  =0;
 
     void start_job(wait_till_t wait_till = wait_till_t::completion) {
-        iomanager.run_on_forget(iomgr::reactor_regex::all_worker, [this]() { start_in_this_thread(); });
+        iomanager.run_on_forget(iomgr::reactor_regex::all_worker, iomgr::fiber_regex::syncio_only, [this]() { start_in_this_thread(); });
         if (wait_till == wait_till_t::execution) {
             wait_for_execution();
         } else if (wait_till == wait_till_t::completion) {

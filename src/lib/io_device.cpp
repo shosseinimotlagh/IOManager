@@ -35,9 +35,9 @@ namespace iomgr
 			//LOGINFO("single write, size {}, lat {}", iocb->size, dur);
         	if ((iocb->offset)%4096 || (iocb->offset)%512)
         	{
-        		LOGWARNMOD(iocb, "single write, size {}, lat {} 4k/512 aligned {}/{}", iocb->size, dur, (iocb->offset)%4096 == 0, (iocb->offset)%512==0);
+        		LOGWARNMOD(iocb, "single write, size {}, lat {} offset {} 4k/512 aligned {}/{}", iocb->size, dur, iocb->offset, (iocb->offset)%4096 == 0, (iocb->offset)%512==0);
         	}
-        	LOGTRACEMOD(iocb, "single write, size {}, lat {} 4k/512 aligned {}/{}", iocb->size, dur, (iocb->offset)%4096 == 0, (iocb->offset)%512==0);
+        	LOGTRACEMOD(iocb, "single write, size {}, lat {} offset {} 4k/512 aligned {}/{}", iocb->size, dur, iocb->offset, (iocb->offset)%4096 == 0, (iocb->offset)%512==0);
 
 			wcount++;
 			wdur += dur;
@@ -58,9 +58,9 @@ namespace iomgr
         	if ((iocb->offset)%4096 || (iocb->offset)%512)
         	{
 
-        		LOGWARNMOD(iocb, "single read, size {}, lat {} 4k/512 aligned {}/{}", iocb->size, dur, (iocb->offset)%4096 == 0, (iocb->offset)%512==0);
+        		LOGWARNMOD(iocb, "single read, size {}, lat {} offset {} 4k/512 aligned {}/{}", iocb->size, dur, iocb->offset, (iocb->offset)%4096 == 0, (iocb->offset)%512==0);
         	}
-        	LOGTRACEMOD(iocb, "single read, size {}, lat {} 4k/512 aligned {}/{}", iocb->size, dur, (iocb->offset)%4096 == 0, (iocb->offset)%512==0);
+        	LOGTRACEMOD(iocb, "single read, size {}, lat {} 4k/512 offset {} aligned {}/{}", iocb->size, dur, iocb->offset, (iocb->offset)%4096 == 0, (iocb->offset)%512==0);
 
            //if (count % 10000 == 0) LOGINFO("read, size {}, lat {}", iocb->size, dur);
 			rcount++;

@@ -268,6 +268,8 @@ public:
     bool am_i_sync_io_capable() const;
     void set_my_reactor_adaptive(bool adaptive);
     io_fiber_t iofiber_self() const;
+    bool am_i_main_fiber() const;
+	io_fiber_t main_fiber() const;
     IOReactor* this_reactor() const;
     std::vector< io_fiber_t > sync_io_capable_fibers() const;
 

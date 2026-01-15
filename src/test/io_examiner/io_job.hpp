@@ -24,7 +24,7 @@ namespace iomgr {
 
 ENUM(verify_type_t, uint8_t, csum, data, header, null);
 ENUM(load_type_t, uint8_t, random, same, sequential);
-VENUM(io_type_t, uint8_t, write = 0, read = 1, unmap = 2);
+VENUM(io_type_t, uint8_t, write = 0, read = 1, unmap = 2 , sync_write = 3, sync_read =4);
 ENUM(buf_pattern_t, uint8_t, random, lbas);
 
 using Clock = std::chrono::steady_clock;
@@ -56,7 +56,7 @@ public:
     std::optional< uint32_t > io_blk_size;          // If not provided, use random blk_size, else use this blksize
 
     // Distribution of IO Patterms
-    std::map< io_type_t, float > io_dist{{io_type_t::write, 34}, {io_type_t::read, 33}, {io_type_t::unmap, 33}};
+    std::map< io_type_t, float > io_dist{{io_type_t::write, 20}, {io_type_t::read, 20}, {io_type_t::unmap, 20}, {io_type_t::sync_write, 20}, {io_type_t::sync_read, 20}};
 
     bool init{true};
     bool expected_init_fail{false};
@@ -151,7 +151,7 @@ public:
             Job{examiner, static_cast< JobCfg >(cfg)},
             m_cfg{cfg},
             m_io_picker{
-                {m_cfg.io_dist[io_type_t::write], m_cfg.io_dist[io_type_t::read], m_cfg.io_dist[io_type_t::unmap]}} {
+                {m_cfg.io_dist[io_type_t::write], m_cfg.io_dist[io_type_t::read], m_cfg.io_dist[io_type_t::unmap], m_cfg.io_dist[io_type_t::sync_write], m_cfg.io_dist[io_type_t::sync_read]}} {
         // Integrated mode is not supported until lambdas or per request completion routine can be passed to iomgr.
         // Otherwise the completion of client iomgr will go back to homestore layer.
         // examiner->attach_completion_cb(bind_this(IOJob::on_completion, 2));
@@ -176,6 +176,12 @@ public:
                 break;
             case io_type_t::unmap:
                 unmap_io();
+                break;
+            case io_type_t::sync_write:
+                write_sync_io();
+                break;
+            case io_type_t::sync_read:
+                read_sync_io();
                 break;
             }
         }
@@ -341,6 +347,40 @@ private:
         return ret;
     }
 
+    bool write_sync_io() {
+        bool ret = false;
+        const IoFuncType write_function = bind_this(IOJob::write_sync_vol, 3);
+        switch (m_cfg.load_type) {
+        case load_type_t::random:
+            ret = run_io(bind_this(IOJob::writeable_rand_lbas, 0), write_function);
+            break;
+        case load_type_t::same:
+            ret = run_io(bind_this(IOJob::same_lbas, 0), write_function);
+            break;
+        case load_type_t::sequential:
+            ret = run_io(bind_this(IOJob::seq_lbas, 0), write_function);
+            break;
+        }
+        return ret;
+    }
+
+    bool read_sync_io() {
+        const IoFuncType read_function{bind_this(IOJob::read_sync_vol, 3)};
+        bool ret = false;
+        switch (m_cfg.load_type) {
+        case load_type_t::random:
+            ret = run_io(bind_this(IOJob::readable_rand_lbas, 0), read_function);
+            break;
+        case load_type_t::same:
+            ret = run_io(bind_this(IOJob::same_lbas, 0), read_function);
+            break;
+        case load_type_t::sequential:
+            assert(0);
+            break;
+        }
+        return ret;
+    }
+
     bool read_io() {
         const IoFuncType read_function{bind_this(IOJob::read_vol, 3)};
         bool ret = false;
@@ -410,6 +450,66 @@ private:
         return true;
     }
 
+    bool write_sync_vol(const uint32_t vol_idx, const uint64_t lba, const uint32_t nlbas) {
+        io_req_t* req = new io_req_t();
+        req->vol_info = m_examiner->m_vol_info[vol_idx];
+        req->lba = lba;
+        req->nlbas = nlbas;
+        req->op_type = io_type_t::sync_write;
+
+        uint64_t size{nlbas * req->vol_info->m_page_size};
+        req->buffer = iomanager.iobuf_alloc(512, size);
+        populate_buf(req->buffer, size, lba);
+
+        LOGTRACE("Write op size={} lba={} outstanding_ios={}", size, lba,
+                 m_outstanding_ios.load(std::memory_order_relaxed) + 1);
+        COUNTER_INCREMENT(m_metrics, iojob_write_count, 1);
+        req->start_time = Clock::now();
+        auto& vol_dev = req->vol_info->m_vol_dev;
+        vol_dev->drive_interface()
+            ->sync_write(vol_dev.get(), r_cast< const char* >(req->buffer), size, lba * req->vol_info->m_page_size);
+        m_outstanding_ios.fetch_add(1, std::memory_order_acq_rel);
+        {
+            std::unique_lock< std::mutex > lk(req->vol_info->m_mtx);
+            req->vol_info->mark_lbas_free(req->lba, req->nlbas);
+        }
+        delete req;
+        m_outstanding_ios.fetch_sub(1, std::memory_order_acq_rel);
+
+        try_run_one_iteration();
+        return true;
+    }
+
+    bool read_sync_vol(const uint32_t vol_idx, const uint64_t lba, const uint32_t nlbas) {
+        io_req_t* req = new io_req_t();
+        req->vol_info = m_examiner->m_vol_info[vol_idx];
+        req->lba = lba;
+        req->nlbas = nlbas;
+        req->op_type = io_type_t::sync_read;
+
+        uint64_t size{nlbas * req->vol_info->m_page_size};
+        req->buffer = iomanager.iobuf_alloc(512, size);
+
+        LOGTRACE("Read op size={} lba={} outstanding_ios={}", size, lba,
+                 m_outstanding_ios.load(std::memory_order_relaxed) + 1);
+        COUNTER_INCREMENT(m_metrics, iojob_read_count, 1);
+        req->start_time = Clock::now();
+        auto& vol_dev = req->vol_info->m_vol_dev;
+        vol_dev->drive_interface()
+            ->sync_read(vol_dev.get(), r_cast< char* >(req->buffer), size, lba * req->vol_info->m_page_size);
+        m_outstanding_ios.fetch_add(1, std::memory_order_acq_rel);
+        m_output.read_cnt.fetch_add(1, std::memory_order_relaxed);
+        {
+            std::unique_lock< std::mutex > lk(req->vol_info->m_mtx);
+            req->vol_info->mark_lbas_free(req->lba, req->nlbas);
+        }
+        delete req;
+        m_outstanding_ios.fetch_sub(1, std::memory_order_acq_rel);
+
+        try_run_one_iteration();
+        return true;
+    }
+
     bool read_vol(const uint32_t vol_idx, const uint64_t lba, const uint32_t nlbas) {
         io_req_t* req = new io_req_t();
         req->vol_info = m_examiner->m_vol_info[vol_idx];
@@ -452,11 +552,14 @@ private:
 
         return true;
     }
-
+	std::atomic<int> read_completions{0};
+    std::atomic<int> write_completions{0};
     void on_completion(io_req_t* req) {
         if (req->op_type == io_type_t::read) {
+			read_completions++;
             HISTOGRAM_OBSERVE(m_metrics, iojob_read_latency, get_elapsed_time_us(req->start_time));
         } else if (req->op_type == io_type_t::write) {
+			write_completions++;
             HISTOGRAM_OBSERVE(m_metrics, iojob_write_latency, get_elapsed_time_us(req->start_time));
         } else {
             HISTOGRAM_OBSERVE(m_metrics, iojob_unmap_latency, get_elapsed_time_us(req->start_time));
@@ -469,9 +572,15 @@ private:
         delete req;
         m_outstanding_ios.fetch_sub(1, std::memory_order_acq_rel);
 
-        try_run_one_iteration();
-    }
+        //try_run_one_iteration();
+        iomanager.run_on_forget(iomgr::reactor_regex::random_worker, iomgr::fiber_regex::syncio_only, [this]() { try_run_one_iteration(); });
 
+    }
+	void report_completions() override {
+        int reads = read_completions.exchange(0);
+        int writes = write_completions.exchange(0);
+		LOGINFO("Reads/sec: {}, Writes/sec: {}",  reads, writes);
+}
     // *************** Other Helper methods ******************
     void populate_buf(uint8_t* buf, const uint64_t size, const uint64_t start_lba) {
         static thread_local std::random_device rd{};
