@@ -572,14 +572,14 @@ private:
         delete req;
         m_outstanding_ios.fetch_sub(1, std::memory_order_acq_rel);
 
-        //try_run_one_iteration();
-        iomanager.run_on_forget(iomgr::reactor_regex::random_worker, iomgr::fiber_regex::syncio_only, [this]() { try_run_one_iteration(); });
+        try_run_one_iteration();
+        //iomanager.run_on_forget(iomgr::reactor_regex::random_worker, iomgr::fiber_regex::syncio_only, [this]() { try_run_one_iteration(); });
 
     }
 	void report_completions() override {
         int reads = read_completions.exchange(0);
         int writes = write_completions.exchange(0);
-		LOGINFO("Reads/sec: {}, Writes/sec: {}",  reads, writes);
+		LOGINFO("Reads/sec: {}, Writes/sec: {} rate r= {:.6f} w={:.6f}",  reads, writes, 1.0/reads, 1.0/writes);
 }
     // *************** Other Helper methods ******************
     void populate_buf(uint8_t* buf, const uint64_t size, const uint64_t start_lba) {

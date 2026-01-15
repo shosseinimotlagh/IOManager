@@ -39,8 +39,8 @@ public:
                                             [this](void* cookie) { try_run_one_iteration(); });
 
         }
-		iomanager.schedule_global_timer(1 * 1000ul * 1000ul * 1000ul, true, nullptr,
-                                            iomgr::reactor_regex::random_worker,
+		hdl = iomanager.schedule_global_timer(1 * 1000ul * 1000ul * 1000ul, true, nullptr,
+                                            iomgr::reactor_regex::all_worker,
                                             [this](void* cookie) { report_completions(); });
     }
     virtual ~Job() = default;
@@ -57,7 +57,9 @@ public:
 	virtual void report_completions ()  =0;
 
     void start_job(wait_till_t wait_till = wait_till_t::completion) {
-        iomanager.run_on_forget(iomgr::reactor_regex::all_worker, iomgr::fiber_regex::syncio_only, [this]() { start_in_this_thread(); });
+       // iomanager.run_on_forget(iomgr::reactor_regex::all_worker, iomgr::fiber_regex::syncio_only, [this]() { start_in_this_thread(); });
+        iomanager.run_on_forget(iomgr::reactor_regex::all_worker, [this]() { start_in_this_thread(); });
+
         if (wait_till == wait_till_t::execution) {
             wait_for_execution();
         } else if (wait_till == wait_till_t::completion) {
@@ -117,10 +119,12 @@ public:
                         (m_status_threads_executing.count() == 0));
             });
         }
+        iomanager.cancel_timer(hdl, false /* wait_to_cancel */);
         LOGINFO("Job {} is completed", job_name());
     }
 
 protected:
+    timer_handle_t hdl;
     std::shared_ptr< IOExaminer > m_examiner;
     JobCfg m_cfg;
     mutable std::mutex m_mutex;
