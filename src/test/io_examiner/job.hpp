@@ -38,6 +38,9 @@ public:
                                             iomgr::thread_regex::all_worker,
                                             [this](void* cookie) { try_run_one_iteration(); });
         }
+		hdl = iomanager.schedule_global_timer(1 * 1000ul * 1000ul * 1000ul, true, nullptr,
+                                            iomgr::thread_regex::all_worker,
+                                            [this](void* cookie) { report_completions(); });
     }
     virtual ~Job() = default;
     Job(const Job&) = delete;
@@ -50,6 +53,7 @@ public:
     virtual bool is_job_done() const = 0;
     virtual bool is_async_job() const = 0;
     virtual std::string job_name() const = 0;
+	virtual void  report_completions() = 0;
 
     void start_job(wait_till_t wait_till = wait_till_t::completion) {
         iomanager.run_on(iomgr::thread_regex::all_worker,
@@ -107,16 +111,21 @@ public:
 
     virtual void wait_for_completion() {
         std::unique_lock< std::mutex > lk(m_mutex);
+
         if (!m_notify_job_done) {
             m_completion_cv.wait(lk, [this] {
                 return ((m_status_threads_executing.get_status() == job_status_t::completed) &&
                         (m_status_threads_executing.count() == 0));
             });
         }
+		 iomanager.cancel_timer(hdl, false /* wait_to_cancel */);
+
         LOGINFO("Job {} is completed", job_name());
     }
 
 protected:
+	    timer_handle_t hdl;
+
     std::shared_ptr< IOExaminer > m_examiner;
     JobCfg m_cfg;
     mutable std::mutex m_mutex;

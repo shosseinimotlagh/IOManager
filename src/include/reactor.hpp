@@ -25,7 +25,7 @@
 
 //#include "drive_type.hpp"
 
-#define IOMGR_LOG_MODS iomgr, spdk, io_wd
+#define IOMGR_LOG_MODS iomgr, spdk, io_wd, iocb
 SISL_LOGGING_DECL(IOMGR_LOG_MODS);
 
 struct spdk_thread;

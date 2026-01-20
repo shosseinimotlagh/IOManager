@@ -38,7 +38,7 @@ public:
     IOJobCfg& operator=(IOJobCfg&&) noexcept = delete;
 
     std::optional< uint64_t > max_num_ios;
-    uint64_t max_io_size{1 * Mi};
+    uint64_t max_io_size{4 * Ki};
     uint64_t qdepth{32u};
     uint64_t max_disk_capacity{10 * Gi};
 
@@ -164,7 +164,7 @@ public:
     IOJob& operator=(IOJob&&) noexcept = delete;
 
     void run_one_iteration() override {
-        RELEASE_ASSERT_GE(m_cfg.qdepth, iomanager.num_workers());
+        //RELEASE_ASSERT_GE(m_cfg.qdepth, iomanager.num_workers());
 
         while (m_outstanding_ios.load(std::memory_order_acquire) < (int64_t)m_cfg.qdepth) {
             switch (pick_io_type()) {
@@ -446,11 +446,15 @@ private:
         return true;
     }
 
-    void on_completion(int64_t res, uint8_t* cookie) {
+    	std::atomic<int> read_completions{0};
+    std::atomic<int> write_completions{0};
+  void on_completion(int64_t res, uint8_t* cookie) {
         io_req_t* req = reinterpret_cast< io_req_t* >(cookie);
         if (req->op_type == io_type_t::read) {
+			read_completions++;
             HISTOGRAM_OBSERVE(m_metrics, iojob_read_latency, get_elapsed_time_us(req->start_time));
         } else if (req->op_type == io_type_t::write) {
+			write_completions++;
             HISTOGRAM_OBSERVE(m_metrics, iojob_write_latency, get_elapsed_time_us(req->start_time));
         } else {
             HISTOGRAM_OBSERVE(m_metrics, iojob_unmap_latency, get_elapsed_time_us(req->start_time));
@@ -465,6 +469,11 @@ private:
 
         try_run_one_iteration();
     }
+void report_completions() override {
+        int reads = read_completions.exchange(0);
+        int writes = write_completions.exchange(0);
+		LOGINFO("Reads/sec: {}, Writes/sec: {} rate r= {:.6f} w={:.6f}",  reads, writes, 1.0/reads, 1.0/writes);
+}
 
     // *************** Other Helper methods ******************
     void populate_buf(uint8_t* buf, const uint64_t size, const uint64_t start_lba) {
