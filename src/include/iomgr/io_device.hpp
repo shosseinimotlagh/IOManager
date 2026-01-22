@@ -97,7 +97,7 @@ public:
     void clear();
     DriveInterface* drive_interface();
 
-    void observe_metrics(drive_iocb* iocb);
+    void observe_metrics(drive_iocb* iocb, bool normal_path);
 
     void decrement_pending(int32_t count = 1) {
         if ((post_add_remove_cb != nullptr) && thread_op_pending_count.decrement_testz(count)) {

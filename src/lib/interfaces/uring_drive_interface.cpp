@@ -226,7 +226,7 @@ folly::Future< std::error_code > UringDriveInterface::async_write(IODevice* iode
         iocb->set_data((char*)data);
         iocb->completion = std::move(folly::Promise< std::error_code >{});
         auto ret = iocb->folly_comp_promise().getFuture().thenValue([iocb](std::error_code ec) {
-            iocb->iodev->observe_metrics(iocb);
+            iocb->iodev->observe_metrics(iocb,false);
             return ec;
         });
 
@@ -262,7 +262,7 @@ folly::Future< std::error_code > UringDriveInterface::async_writev(IODevice* iod
     iocb->set_iovs(iov, iovcnt);
     iocb->completion = std::move(folly::Promise< std::error_code >{});
     auto ret = iocb->folly_comp_promise().getFuture().thenValue([iocb](std::error_code ec) {
-        iocb->iodev->observe_metrics(iocb);
+        iocb->iodev->observe_metrics(iocb, false);
         return ec;
     });
 
@@ -304,7 +304,7 @@ folly::Future< std::error_code > UringDriveInterface::async_read(IODevice* iodev
         iocb->set_data(data);
         iocb->completion = std::move(folly::Promise< std::error_code >{});
         auto ret = iocb->folly_comp_promise().getFuture().thenValue([iocb](std::error_code ec) {
-            iocb->iodev->observe_metrics(iocb);
+            iocb->iodev->observe_metrics(iocb, false);
             return ec;
         });
 
@@ -341,7 +341,7 @@ folly::Future< std::error_code > UringDriveInterface::async_readv(IODevice* iode
     iocb->set_iovs(iov, iovcnt);
     iocb->completion = std::move(folly::Promise< std::error_code >{});
     auto ret = iocb->folly_comp_promise().getFuture().thenValue([iocb](std::error_code ec) {
-        iocb->iodev->observe_metrics(iocb);
+        iocb->iodev->observe_metrics(iocb, false);
         return ec;
     });
 
@@ -405,6 +405,9 @@ folly::Future< std::error_code > UringDriveInterface::queue_fsync(IODevice* iode
 
 std::error_code UringDriveInterface::sync_write(IODevice* iodev, const char* data, uint32_t size, uint64_t offset) {
 	auto tn = current_thread_name_or_id(fiber_id());
+	static uint64_t wdur = 0;
+	static uint64_t wcount = 0;
+	static uint64_t wsize = 0;
 	auto start_time = Clock::now();
     if (!iomanager.am_i_sync_io_capable() || (t_uring_ch == nullptr) || !t_uring_ch->can_submit()) {
         //return KernelDriveInterface::sync_write(iodev, data, size, offset);
@@ -413,8 +416,17 @@ std::error_code UringDriveInterface::sync_write(IODevice* iodev, const char* dat
         auto can_submit = (t_uring_ch && t_uring_ch->can_submit()) ? "true" : "false";
 
         auto ret = KernelDriveInterface::sync_write(iodev, data, size, offset);
+		auto dur= get_elapsed_time_us(start_time);
+		wcount++;
+		wdur += dur;
+		wsize += size;
         LOGTRACEMOD(perfsync, "thread: {} sync_write called size {} latency {} sync_io_capable {} can_submit {}", tn, size,
-                get_elapsed_time_us(start_time), sync_io_capable, uring_ch_null, can_submit);
+                dur, sync_io_capable, uring_ch_null, can_submit);
+		if(wcount % 10000 == 0) {
+			LOGINFOMOD(perfsync, "sync_write(kernel), total count {} average size {}, average lat {}",wcount, wsize/ 10000 , wdur/ 10000);
+			wdur = 0;
+			wsize = 0;
+		}
         return ret;
     }
 
@@ -439,19 +451,41 @@ std::error_code UringDriveInterface::sync_write(IODevice* iodev, const char* dat
         io_uring_prep_write(sqe, iodev->fd(), (const void*)iocb->get_data(), iocb->size, offset);
         t_uring_ch->submit_if_needed(iocb, sqe, false);
 		auto ret = f.get();
-        LOGTRACEMOD(perfsync, "thread: {} sync_write called size {} latency {}", tn, size, get_elapsed_time_us(start_time));
+		auto dur= get_elapsed_time_us(start_time);
+
+		wcount++;
+		wdur += dur;
+		wsize += size;
+        LOGTRACEMOD(perfsync, "thread: {} sync_write called size {} latency {}", tn, size, dur);
+		if(wcount % 10000 == 0) {
+			LOGINFOMOD(perfsync, "sync_write(uring), total count {} average size {}, average lat {}",wcount, wsize/ 10000 , wdur/ 10000);
+			wdur = 0;
+			wsize = 0;
+		}
         return ret;
     }
 }
 
 std::error_code UringDriveInterface::sync_writev(IODevice* iodev, const iovec* iov, int iovcnt, uint32_t size,
                                                  uint64_t offset) {
+	static uint64_t wdur = 0;
+	static uint64_t wcount = 0;
+	static uint64_t wsize = 0;
+
     auto tn = current_thread_name_or_id(fiber_id());
 	auto start_time = Clock::now();
     if (!iomanager.am_i_sync_io_capable() || (t_uring_ch == nullptr) || !t_uring_ch->can_submit()) {
-
         auto ret = KernelDriveInterface::sync_writev(iodev, iov, iovcnt, size, offset);
-        LOGTRACEMOD(perfsync, "thread: {} sync_writev called size {} latency {}", tn, size, get_elapsed_time_us(start_time));
+		auto dur= get_elapsed_time_us(start_time);
+		wcount++;
+		wdur += dur;
+		wsize += size;
+        LOGTRACEMOD(perfsync, "thread: {} sync_writev called size {} latency {}", tn, size, dur);
+		if(wcount % 10000 == 0) {
+			LOGINFOMOD(perfsync, "sync_writev(kernel), total count {} average size {}, average lat {}",wcount, wsize/ 10000 , wdur/ 10000);
+			wdur = 0;
+			wsize = 0;
+		}
 		return ret;
 //return KernelDriveInterface::sync_writev(iodev, iov, iovcnt, size, offset);
     }
@@ -470,7 +504,18 @@ std::error_code UringDriveInterface::sync_writev(IODevice* iodev, const iovec* i
     io_uring_prep_writev(sqe, iodev->fd(), iocb->get_iovs(), iocb->iovcnt, offset);
     t_uring_ch->submit_if_needed(iocb, sqe, false);
 	auto ret = f.get();
-    LOGTRACEMOD(perfsync, "thread: {} sync_writev called size {} latency {}",tn, size, get_elapsed_time_us(start_time));
+	auto dur= get_elapsed_time_us(start_time);
+
+	wcount++;
+	wdur += dur;
+	wsize += iocb->size;
+    LOGTRACEMOD(perfsync, "thread: {} sync_writev(uring) called size {} latency {}",tn, size, dur);
+	if(wcount % 10000 == 0) {
+		LOGINFOMOD(perfsync, "sync_writev(uring), total count {} average size {}, average lat {}",wcount, wsize/ 10000 , wdur/ 10000);
+		wdur = 0;
+		wsize = 0;
+	}
+
     return ret;
 }
 
@@ -626,6 +671,7 @@ void UringDriveInterface::handle_completions() {
 }
 
 void UringDriveInterface::complete_io(drive_iocb* iocb) {
+	iocb->iodev->observe_metrics(iocb, true);
     if (sisl_likely(iocb->result >= 0)) {
         static std::error_code success;
         std::visit(overloaded{[&](folly::Promise< std::error_code >& p) { p.setValue(success); },

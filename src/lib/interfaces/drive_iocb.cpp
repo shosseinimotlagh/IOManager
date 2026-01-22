@@ -20,9 +20,7 @@ namespace iomgr {
 
 drive_iocb::drive_iocb(DriveInterface* iface, IODevice* iodev, DriveOpType op_type, uint64_t size, uint64_t offset) :
         iodev(iodev), iface{iface}, op_type(op_type), size(size), offset(offset) {
-#ifndef NDEBUG
     iocb_id = _iocb_id_counter.fetch_add(1, std::memory_order_relaxed);
-#endif
     initiating_reactor = iomanager.this_reactor();
     user_data.emplace< 0 >();
     op_start_time = Clock::now();

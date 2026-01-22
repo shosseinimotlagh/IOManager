@@ -79,9 +79,7 @@ public:
 
 class DriveInterface;
 struct drive_iocb {
-#ifndef NDEBUG
     static std::atomic< uint64_t > _iocb_id_counter;
-#endif
     static constexpr int inlined_iov_count = 4;
     typedef std::array< iovec, inlined_iov_count > inline_iov_array;
     typedef std::unique_ptr< iovec[] > large_iov_array;
@@ -100,9 +98,7 @@ struct drive_iocb {
     uint32_t resubmit_cnt{0};
     uint32_t part_read_resubmit_cnt{0}; // only valid for uring interface
     IOReactor* initiating_reactor;
-#ifndef NDEBUG
     uint64_t iocb_id;
-#endif
     Clock::time_point op_start_time;
     Clock::time_point op_submit_time;
 

@@ -11,7 +11,7 @@ namespace iomgr
 {
 
 
-        void IODevice::observe_metrics(drive_iocb* iocb) {
+        void IODevice::observe_metrics(drive_iocb* iocb, bool normal_path) {
         if (!m_metrics.get()) { return; }
 		static uint64_t count = 0;
 		static uint64_t wcount = 0;
@@ -23,7 +23,14 @@ namespace iomgr
 		static uint64_t wsize = 0;
 		static uint64_t rsize = 0;
 		static uint64_t fsize = 0;
+        std::string normal_path_str = normal_path ? "iocomplete_path" : "folly_path";
         auto dur = get_elapsed_time_us(iocb->op_start_time);
+      	const std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(iocb->get_data());
+        const bool off_4k_aligned = (iocb->offset % 4096) == 0;
+        const bool off_512_aligned = (iocb->offset % 512) == 0;
+        const bool addr_4k_aligned = (addr % 4096) == 0;
+        const bool addr_512_aligned = (addr % 512) == 0;
+
         switch (iocb->op_type) {
         case DriveOpType::WRITE:
          //   HISTOGRAM_OBSERVE(*m_metrics, write_lat, dur);
@@ -35,18 +42,20 @@ namespace iomgr
 			//LOGINFO("single write, size {}, lat {}", iocb->size, dur);
         	if ((iocb->offset)%4096 || (iocb->offset)%512)
         	{
-        		LOGWARNMOD(iocb, "single write, size {}, lat {} offset {} 4k/512 aligned {}/{}", iocb->size, dur, iocb->offset, (iocb->offset)%4096 == 0, (iocb->offset)%512==0);
+        		LOGWARNMOD(iocb, "{} single write iocb_id {}, size {}, lat {} offset {} 4k/512 offset aligned {}/{} address 4k/512 aligned {}/{}",normal_path_str, iocb->iocb_id, iocb->size, dur, iocb->offset, off_4k_aligned, off_512_aligned, addr_4k_aligned, addr_512_aligned);
         	}
-        	LOGTRACEMOD(iocb, "single write, size {}, lat {} offset {} 4k/512 aligned {}/{}", iocb->size, dur, iocb->offset, (iocb->offset)%4096 == 0, (iocb->offset)%512==0);
+        	LOGTRACEMOD(iocb, "{} single write iocb_id {}, size {}, lat {} offset {} 4k/512 offset aligned {}/{} address 4k/512 aligned {}/{}",normal_path_str, iocb->iocb_id, iocb->size, dur, iocb->offset, off_4k_aligned, off_512_aligned, addr_4k_aligned, addr_512_aligned);
+			if (!normal_path)
+			{
+				wcount++;
+				wdur += dur;
+				wsize += iocb->size;
 
-			wcount++;
-			wdur += dur;
-			wsize += iocb->size;
-
-			if(wcount % 10000 == 0) {
-				LOGINFOMOD(iocb, "write, total count {} average size {}, average lat {}",wcount, wsize/ 10000 , wdur/ 10000);
-				wdur = 0;
-				wsize = 0;
+				if(wcount % 10000 == 0) {
+					LOGINFOMOD(iocb, "write, total count {} average size {}, average lat {}",wcount, wsize/ 10000 , wdur/ 10000);
+					wdur = 0;
+					wsize = 0;
+				}
 			}
             break;
         case DriveOpType::READ:
@@ -58,19 +67,22 @@ namespace iomgr
         	if ((iocb->offset)%4096 || (iocb->offset)%512)
         	{
 
-        		LOGWARNMOD(iocb, "single read, size {}, lat {} offset {} 4k/512 aligned {}/{}", iocb->size, dur, iocb->offset, (iocb->offset)%4096 == 0, (iocb->offset)%512==0);
+        		LOGWARNMOD(iocb, "{} single read iocb_id {}, size {}, lat {} offset {} 4k/512 aligned {}/{} address 4k/512 aligned {}/{}",normal_path_str,iocb->iocb_id, iocb->size, dur, iocb->offset, off_4k_aligned, off_512_aligned, addr_4k_aligned, addr_512_aligned);
         	}
-        	LOGTRACEMOD(iocb, "single read, size {}, lat {} 4k/512 offset {} aligned {}/{}", iocb->size, dur, iocb->offset, (iocb->offset)%4096 == 0, (iocb->offset)%512==0);
+        	LOGTRACEMOD(iocb, "{} single read iocb_id {}, size {}, lat {} 4k/512 offset {} aligned {}/{} address 4k/512 aligned {}/{}",normal_path_str,iocb->iocb_id, iocb->size, dur, iocb->offset, off_4k_aligned, off_512_aligned, addr_4k_aligned, addr_512_aligned);
 
            //if (count % 10000 == 0) LOGINFO("read, size {}, lat {}", iocb->size, dur);
-			rcount++;
-			rdur += dur;
-			rsize += iocb->size;
-			if(rcount % 10000 == 0) {
-				LOGINFOMOD(iocb, "read, total count {} average size {}, average lat {}",rcount, rsize/ 10000 , rdur/ 10000);
-				rdur = 0;
-				rsize = 0;
-			}
+        	if (!normal_path)
+        	{
+        		rcount++;
+        		rdur += dur;
+        		rsize += iocb->size;
+        		if(rcount % 10000 == 0) {
+        			LOGINFOMOD(iocb, "read, total count {} average size {}, average lat {}",rcount, rsize/ 10000 , rdur/ 10000);
+        			rdur = 0;
+        			rsize = 0;
+        		}
+        	}
             break;
         case DriveOpType::FSYNC:
           //  HISTOGRAM_OBSERVE(*m_metrics, fsync_lat, dur);

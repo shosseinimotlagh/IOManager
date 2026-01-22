@@ -49,9 +49,7 @@ std::mutex DriveInterface::s_dev_type_lookup_mtx;
 std::unordered_map< std::string, drive_attributes > DriveInterface::s_dev_attrs;
 std::mutex DriveInterface::s_dev_attrs_lookup_mtx;
 
-#ifndef NDEBUG
 std::atomic< uint64_t > drive_iocb::_iocb_id_counter{0};
-#endif
 
 static std::string get_mounted_device(const std::string& filename) {
     struct stat s;
