@@ -61,6 +61,7 @@ void HttpServer::start() {
 void HttpServer::restart(std::string const& ssl_cert, std::string const& ssl_key) {
     std::unique_lock< std::mutex > lock(m_mutex);
     m_server_running = false;
+    m_http_endpoint->shutdown();
     init(ssl_cert, ssl_key);
     m_localhost_list.clear();
     m_safelist.clear();
