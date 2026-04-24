@@ -4,8 +4,8 @@ pipeline {
     environment {
         ARTIFACTORY_PASS = credentials('ARTIFACTORY_PASS')
         CONAN_USER = 'oss'
-        TARGET_BRANCH = 'master'
         STABLE_BRANCH = 'stable/v*'
+        BUILD_MISSING = "--build missing"
         built_chain = ''
         failed_pkg = ''
     }
@@ -15,27 +15,6 @@ pipeline {
     }
 
     stages {
-        stage('Adjust Tag for Master/PR') {
-            when { not {
-                branch "${STABLE_BRANCH}"
-            } }
-            steps {
-                script {
-                    BUILD_MISSING = "--build missing"
-                }
-            }
-        }
-        stage('Adjust for Testing/Stable') {
-            when {
-                branch "${STABLE_BRANCH}"
-            }
-            steps {
-                script {
-                    BUILD_MISSING = ""
-                }
-            }
-        }
-
         stage('Get Version') {
             steps {
                 script {
@@ -55,13 +34,14 @@ pipeline {
             steps {
                 script {
                     TAG = "${VER}@"
+                    CONAN_FLAGS = "--name ${PROJECT}"
                 }
             }
         }
 
         stage("Compile") {
             steps {
-                sh "conan create ${BUILD_MISSING} -s:h build_type=Debug -o ${PROJECT}/*:sanitize=True ${CONAN_FLAGS} . ; \
+                sh "conan build ${BUILD_MISSING} -s:h build_type=Debug -o ${PROJECT}/*:sanitize=True ${CONAN_FLAGS} . ; \
                     conan create ${BUILD_MISSING} -s:h build_type=Debug ${CONAN_FLAGS} . ; \
                     conan create ${BUILD_MISSING} -s:h build_type=RelWithDebInfo -o sisl/*:malloc_impl=tcmalloc ${CONAN_FLAGS} . ; \
                     conan create ${BUILD_MISSING} -s:h build_type=RelWithDebInfo -o sisl/*:prerelease=True -o sisl/*:malloc_impl=tcmalloc ${CONAN_FLAGS} . ; \
@@ -81,7 +61,7 @@ pipeline {
         }
         stage("Downstream Build") {
             when { allOf {
-               expression { (env.BRANCH_NAME == "${TARGET_BRANCH}") }
+               expression { (env.BRANCH_NAME == "${STABLE_BRANCH}") }
                expression { (!"${upstream_triggered}") || ("${upstream_triggered}" == "") }
             } }
         

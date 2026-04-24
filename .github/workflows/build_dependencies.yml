@@ -82,41 +82,41 @@ jobs:
     runs-on: ${{ inputs.platform }}
     steps:
     - name: Retrieve Code
-      uses: actions/checkout@main
+      uses: actions/checkout@v4
       with:
         ref: ${{ inputs.branch }}
       if: ${{ inputs.testing == 'True' }}
 
     - name: Retrieve Recipe
-      uses: actions/checkout@main
+      uses: actions/checkout@v4
       with:
         repository: eBay/IOManager
         ref: ${{ inputs.branch }}
       if: ${{ inputs.testing == 'False' }}
 
     - name: Setup Conan
-      uses: ebay/sisl/.github/actions/setup_conan2@master
+      uses: ebay/sisl/.github/actions/setup_conan2@stable/v13.x
       with:
         platform: ${{ inputs.platform }}
       if: ${{ inputs.testing == 'True' || steps.restore-cache.outputs.cache-hit != 'true' }}
 
     - name: Load IOMgr Cache
       id: restore-cache
-      uses: eBay/sisl/.github/actions/load_conan2@master
+      uses: eBay/sisl/.github/actions/load_conan2@stable/v13.x
       with:
         testing: ${{ inputs.testing }}
         key_prefix: IOMgrDeps-${{ inputs.platform }}-${{ inputs.build-type }}-${{ inputs.malloc-impl }}-${{ inputs.prerelease }}
 
     - name: Retrieve Dependencies
-      uses: actions/checkout@main
+      uses: actions/checkout@v4
       with:
         repository: eBay/sisl
         path: import/sisl
-        ref: master
+        ref: stable/v13.x
       if: ${{ inputs.testing == 'True' || steps.restore-cache.outputs.cache-hit != 'true' }}
 
     - name: Load Sisl Cache
-      uses: eBay/sisl/.github/actions/load_conan2@master
+      uses: eBay/sisl/.github/actions/load_conan2@stable/v13.x
       with:
         testing: 'False'
         path: import/sisl
@@ -126,7 +126,7 @@ jobs:
 
     - name: Prepare Recipes
       run: |
-        conan export --user oss --channel master import/sisl
+        conan export import/sisl
         ./prepare_v2.sh
       if: ${{ inputs.testing == 'True' || steps.restore-cache.outputs.cache-hit != 'true' }}
 
@@ -143,13 +143,13 @@ jobs:
       if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
 
     - name: Save Conan Cache
-      uses: eBay/sisl/.github/actions/store_conan2@master
+      uses: eBay/sisl/.github/actions/store_conan2@stable/v13.x
       with:
         key_prefix: IOMgrDeps-${{ inputs.platform }}-${{ inputs.build-type }}-${{ inputs.malloc-impl }}-${{ inputs.prerelease }}
       if: ${{ github.event_name != 'pull_request' && steps.restore-cache.outputs.cache-hit != 'true' }}
 
     - name: Reload Sisl Cache
-      uses: eBay/sisl/.github/actions/load_conan2@master
+      uses: eBay/sisl/.github/actions/load_conan2@stable/v13.x
       with:
         testing: 'False'
         path: import/sisl

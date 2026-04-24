@@ -61,15 +61,15 @@ class IOMgrConan(ConanFile):
             self.options["spdk"].native_build = True
 
     def build_requirements(self):
-        self.test_requires("gtest/1.17.0")
-        self.test_requires("cpr/1.12.0")
+        self.test_requires("gtest/[^1.17]")
+        self.test_requires("cpr/[^1.12]")
 
     def requirements(self):
-        self.requires("sisl/[^13]@oss/master", transitive_headers=True)
+        self.requires("sisl/[^13.2]", transitive_headers=True)
         if self.options.spdk:
             self.requires("spdk/nbi.21.07.y", transitive_headers=True)
         else:
-            self.requires("liburing/[>=2.1]", transitive_headers=True)
+            self.requires("liburing/[^2.1]", transitive_headers=True)
         self.requires("pistache/nbi.0.0.5.1", transitive_headers=True)
         self.requires("libcurl/[^8.4]", override=True)
 
