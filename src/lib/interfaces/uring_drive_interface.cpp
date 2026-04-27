@@ -422,8 +422,8 @@ std::error_code UringDriveInterface::sync_write(IODevice* iodev, const char* dat
 		wsize += size;
         LOGTRACEMOD(perfsync, "thread: {} sync_write called size {} latency {} sync_io_capable {} can_submit {}", tn, size,
                 dur, sync_io_capable, uring_ch_null, can_submit);
-		if(wcount % 10000 == 0) {
-			LOGINFOMOD(perfsync, "sync_write(kernel), total count {} average size {}, average lat {}",wcount, wsize/ 10000 , wdur/ 10000);
+		if(wcount % 1000 == 0) {
+			LOGINFOMOD(perfsync, "sync_write(kernel), total count {} average size {}, average lat {}",wcount, wsize/ 1000 , wdur/ 1000);
 			wdur = 0;
 			wsize = 0;
 		}
@@ -457,8 +457,8 @@ std::error_code UringDriveInterface::sync_write(IODevice* iodev, const char* dat
 		wdur += dur;
 		wsize += size;
         LOGTRACEMOD(perfsync, "thread: {} sync_write called size {} latency {}", tn, size, dur);
-		if(wcount % 10000 == 0) {
-			LOGINFOMOD(perfsync, "sync_write(uring), total count {} average size {}, average lat {}",wcount, wsize/ 10000 , wdur/ 10000);
+		if(wcount % 1000 == 0) {
+			LOGINFOMOD(perfsync, "sync_write(uring), total count {} average size {}, average lat {}",wcount, wsize/ 1000 , wdur/ 1000);
 			wdur = 0;
 			wsize = 0;
 		}
@@ -481,8 +481,8 @@ std::error_code UringDriveInterface::sync_writev(IODevice* iodev, const iovec* i
 		wdur += dur;
 		wsize += size;
         LOGTRACEMOD(perfsync, "thread: {} sync_writev called size {} latency {}", tn, size, dur);
-		if(wcount % 10000 == 0) {
-			LOGINFOMOD(perfsync, "sync_writev(kernel), total count {} average size {}, average lat {}",wcount, wsize/ 10000 , wdur/ 10000);
+		if(wcount % 1000 == 0) {
+			LOGINFOMOD(perfsync, "sync_writev(kernel), total count {} average size {}, average lat {}",wcount, wsize/ 1000 , wdur/ 1000);
 			wdur = 0;
 			wsize = 0;
 		}
@@ -510,8 +510,8 @@ std::error_code UringDriveInterface::sync_writev(IODevice* iodev, const iovec* i
 	wdur += dur;
 	wsize += iocb->size;
     LOGTRACEMOD(perfsync, "thread: {} sync_writev(uring) called size {} latency {}",tn, size, dur);
-	if(wcount % 10000 == 0) {
-		LOGINFOMOD(perfsync, "sync_writev(uring), total count {} average size {}, average lat {}",wcount, wsize/ 10000 , wdur/ 10000);
+	if(wcount % 1000 == 0) {
+		LOGINFOMOD(perfsync, "sync_writev(uring), total count {} average size {}, average lat {}",wcount, wsize/ 1000 , wdur/ 1000);
 		wdur = 0;
 		wsize = 0;
 	}

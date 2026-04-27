@@ -34,6 +34,8 @@ SISL_OPTION_GROUP(test_io,
                    ::cxxopts::value< uint32_t >()->default_value("0"), "number"),
                   (device_list, "", "device_list", "List of device paths",
                    ::cxxopts::value< std::vector< std::string > >(), "path [...]"),
+                  (sync_write, "", "sync_write", "sync write io for ut",
+                  ::cxxopts::value< uint32_t >()->default_value("0"), "number"),
                   (device_size, "", "device_size", "size of devices to do IO on",
                    ::cxxopts::value< uint64_t >()->default_value("1073741824"), "size"),
                   (spdk, "", "spdk", "spdk", ::cxxopts::value< bool >()->default_value("false"), "true or false"))
@@ -66,8 +68,15 @@ TEST(IOMgrTest, basic_io_test) {
     IOJobCfg cfg;
     cfg.max_disk_capacity = dev_size;
    cfg.run_time = SISL_OPTIONS["run_time"].as< uint32_t >();
-    //cfg.io_dist = {{io_type_t::write, 25}, {io_type_t::read, 25}, {io_type_t::sync_write, 25}, {io_type_t::sync_read, 25}};
-   cfg.io_dist = {{io_type_t::write, 50}, {io_type_t::read, 50}};
+   uint32_t sync_write_count = SISL_OPTIONS["sync_write"].as< uint32_t >();
+   uint32_t total_async = 100 -sync_write_count ;
+   if (total_async != 100){
+    cfg.io_dist = {{io_type_t::write, total_async/2}, {io_type_t::read, total_async/2}, {io_type_t::sync_write, sync_write_count}};
+   }else
+   {
+    cfg.io_dist = {{io_type_t::write, 50}, {io_type_t::read, 50}};
+   }
+
 
  cfg.load_type = (load_type_t)SISL_OPTIONS["load_type"].as< uint32_t >();
     cfg.io_blk_size = SISL_OPTIONS["blk_size"].as< uint32_t >()*1024;
