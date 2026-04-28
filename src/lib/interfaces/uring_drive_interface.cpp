@@ -201,23 +201,11 @@ void UringDriveInterface::close_dev(const io_device_ptr& iodev) {
 
 void UringDriveInterface::async_write(IODevice* iodev, const char* data, uint32_t size, uint64_t offset,
                                       uint8_t* cookie, bool part_of_batch) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
     std::array< iovec, 1 > iov;
     iov[0].iov_base = (void*)data;
     iov[0].iov_len = size;
 
     async_writev(iodev, iov.data(), 1, size, offset, cookie, part_of_batch);
-#else
-    RELEASE_ASSERT(0, "async_write not expected to arrive here.");
-    auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::WRITE, size, offset, cookie);
-    iocb->set_data((char*)data);
-    increment_outstanding_counter(iocb, this);
-    auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
-    if (sqe == nullptr) { return; }
-
-    io_uring_prep_write(sqe, iodev->fd(), (const void*)iocb->get_data(), iocb->size, offset);
-    t_uring_ch->submit_if_needed(iocb, sqe, part_of_batch);
-#endif
 }
 
 void UringDriveInterface::async_writev(IODevice* iodev, const iovec* iov, int iovcnt, uint32_t size, uint64_t offset,
@@ -234,23 +222,11 @@ void UringDriveInterface::async_writev(IODevice* iodev, const iovec* iov, int io
 
 void UringDriveInterface::async_read(IODevice* iodev, char* data, uint32_t size, uint64_t offset, uint8_t* cookie,
                                      bool part_of_batch) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
     std::array< iovec, 1 > iov;
     iov[0].iov_base = data;
     iov[0].iov_len = size;
 
     async_readv(iodev, iov.data(), 1, size, offset, cookie, part_of_batch);
-#else
-    RELEASE_ASSERT(0, "async_read not expected to arrive here.");
-    auto iocb = sisl::ObjectAllocator< drive_iocb >::make_object(iodev, DriveOpType::READ, size, offset, cookie);
-    iocb->set_data(data);
-    increment_outstanding_counter(iocb, this);
-    auto sqe = t_uring_ch->get_sqe_or_enqueue(iocb);
-    if (sqe == nullptr) { return; }
-
-    io_uring_prep_read(sqe, iodev->fd(), (void*)iocb->get_data(), iocb->size, offset);
-    t_uring_ch->submit_if_needed(iocb, sqe, part_of_batch);
-#endif
 }
 
 void UringDriveInterface::async_readv(IODevice* iodev, const iovec* iov, int iovcnt, uint32_t size, uint64_t offset,
