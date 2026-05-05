@@ -2,7 +2,7 @@
  "graph_lock": {
   "nodes": {
    "0": {
-    "ref": "iomgr/8.8.4",
+    "ref": "iomgr/8.8.5",
     "requires": [
      "1",
      "2",
@@ -90,10 +90,7 @@
     "context": "host"
    },
    "10": {
-    "ref": "openssl/3.6.0#89e8af1d4a21afcac0557079d23d8890",
-    "requires": [
-     "3"
-    ],
+    "ref": "openssl/1.1.1s#8a0e3aad43aa2f6fd22413370962b452",
     "context": "host"
    },
    "11": {
